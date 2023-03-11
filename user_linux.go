@@ -20,12 +20,12 @@ func (u User) OS() OS {
 	}
 
 	// Assign default values if necessary
-	if u.Uid < 0 {
-		u.Uid = syscall.Geteuid()
+	if u.UID < 0 {
+		u.UID = syscall.Geteuid()
 	}
 
-	if u.Gid < 0 {
-		u.Gid = syscall.Getegid()
+	if u.GID < 0 {
+		u.GID = syscall.Getegid()
 	}
 
 	groups, _ := syscall.Getgroups() //nolint:errcheck
@@ -35,7 +35,7 @@ func (u User) OS() OS {
 	}
 
 	// Check whether we are impersonating a user
-	if u.Uid == syscall.Geteuid() && u.Gid == syscall.Getegid() && equal(u.Groups, groups) {
+	if u.UID == syscall.Geteuid() && u.GID == syscall.Getegid() && equal(u.Groups, groups) {
 		return &def{}
 	}
 
@@ -605,50 +605,77 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 		return nil, err
 	}
 
-	create := perm & fs.FileMode(os.O_CREATE)
-	perm -= create
+	var (
+		f   *os.File
+		err error
+	)
 
-	f, err := os.OpenFile(name, flag, perm)
-	if os.IsNotExist(err) && create > 0 {
-		d, derr := os.Open(filepath.Dir(name))
-		if derr != nil {
-			return nil, derr
-		}
+	// Try to open a new file
+	for {
+		f, err = os.OpenFile(name, flag, perm|fs.FileMode(os.O_EXCL))
+		if os.IsExist(err) {
+			stat, err := os.Stat(name)
+			if os.IsNotExist(err) {
+				// The file disappeared in between OpenFile and Stat
+				// Retry exclusive OpenFile, it makes no sense to return
+				// file not found.
+				continue
+			} else if err != nil {
+				return nil, err
+			}
 
-		stat, derr := d.Stat()
-		if derr != nil {
-			return nil, derr
-		}
+			p := Write
 
-		// Can create file?
-		if err = u.checkPermission(stat, Write); err != nil {
+			if perm&fs.FileMode(os.O_RDONLY) > 0 {
+				p = Read
+			}
+
+			if err = u.checkPermission(stat, p); err != nil {
+				return nil, err
+			}
+
+			return os.OpenFile(name, flag, perm)
+		} else if err != nil {
 			return nil, err
 		}
 
-		f, err = os.OpenFile(name, flag, perm|create)
-		if err != nil {
-			return nil, err
-		}
-
-		err = u.chownNewFile(f, stat)
-	} else {
-		create = 0
+		break
 	}
 
+	// Check whether we should have created the file
+
+	d, err := os.Open(filepath.Dir(name))
 	if err != nil {
+		os.Remove(name) //nolint:errcheck
+		f.Close()
+
 		return nil, err
 	}
 
-	stat, err := f.Stat()
+	stat, err := d.Stat()
 	if err != nil {
+		os.Remove(name) //nolint:errcheck
+		f.Close()
+
 		return nil, err
 	}
 
-	if perm&fs.FileMode(os.O_RDONLY) > 0 {
-		return f, u.checkPermission(stat, Read)
+	// Can create file?
+	if err = u.checkPermission(stat, Write); err != nil {
+		os.Remove(name) //nolint:errcheck
+		f.Close()
+
+		return nil, err
 	}
 
-	return f, u.checkPermission(stat, Write)
+	if err = u.chownNewFile(f, stat); err != nil {
+		os.Remove(name) //nolint:errcheck
+		f.Close()
+
+		return nil, err
+	}
+
+	return f, nil
 }
 
 func (u *user) ReadDir(name string) ([]os.DirEntry, error) {

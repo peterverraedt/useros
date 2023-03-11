@@ -6,8 +6,8 @@ import (
 )
 
 type User struct {
-	Uid    int
-	Gid    int
+	UID    int
+	GID    int
 	Groups []int
 }
 

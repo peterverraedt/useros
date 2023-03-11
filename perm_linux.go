@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
@@ -37,7 +36,7 @@ const (
 )
 
 func (p Permission) User() uint32 {
-	return uint32(p)
+	return uint32(p) * 0100
 }
 
 func (p Permission) Group() uint32 {
@@ -45,7 +44,7 @@ func (p Permission) Group() uint32 {
 }
 
 func (p Permission) Other() uint32 {
-	return uint32(p) * 0100
+	return uint32(p)
 }
 
 func (u *user) CheckPermission(name string, permission Permission) error {
@@ -67,33 +66,36 @@ func (u *user) LcheckPermission(name string, permission Permission) error {
 }
 
 func (u *user) canTraverseParents(name string) error {
-	name, err := filepath.Abs(name)
+	dirs, err := Directories(name)
 	if err != nil {
 		return err
 	}
 
-	if name == "/" || name == "" {
-		return nil
+	checked := make(map[string]struct{})
+
+	for _, dir := range dirs {
+		if _, ok := checked[dir]; ok {
+			continue
+		}
+
+		stat, err := os.Stat(dir)
+		if err != nil {
+			return err
+		}
+
+		if !stat.IsDir() {
+			return syscall.ENOTDIR
+		}
+
+		err = u.checkPermission(stat, Execute)
+		if err != nil {
+			return err
+		}
+
+		checked[dir] = struct{}{}
 	}
 
-	parent := filepath.Dir(name)
-
-	err = u.canTraverseParents(parent)
-	if err != nil {
-		return err
-	}
-
-	stat, err := u.Stat(parent)
-	if err != nil {
-		return err
-	}
-
-	// The parent should be a directory
-	if !stat.IsDir() {
-		return syscall.ENOTDIR
-	}
-
-	return u.checkPermission(stat, Execute)
+	return nil
 }
 
 func (u *user) checkOwnership(stat fs.FileInfo) error {
@@ -102,7 +104,7 @@ func (u *user) checkOwnership(stat fs.FileInfo) error {
 		return ErrTypeAssertion
 	}
 
-	if stat_t.Uid != uint32(u.Uid) {
+	if stat_t.Uid != uint32(u.UID) {
 		return os.ErrPermission
 	}
 
@@ -116,26 +118,27 @@ func (u *user) checkPermission(stat os.FileInfo, perms ...Permission) error {
 		return ErrTypeAssertion
 	}
 
-outer:
 	for _, perm := range perms {
-		switch {
-		case stat_t.Uid == uint32(u.Uid) && stat_t.Mode&perm.User() > 0:
-			continue
-		case stat_t.Gid == uint32(u.Gid) && stat_t.Mode&perm.Group() > 0:
-			continue
-		case stat_t.Mode&perm.Other() > 0:
-			continue
-		}
+		var access bool
 
-		if stat_t.Mode&perm.Group() > 0 {
+		switch {
+		case stat_t.Uid == uint32(u.UID):
+			access = stat_t.Mode&perm.User() > 0
+		case stat_t.Gid == uint32(u.GID):
+			access = stat_t.Mode&perm.Group() > 0
+		default:
+			access = stat_t.Mode&perm.Other() > 0
+
 			for _, g := range u.Groups {
 				if stat_t.Gid == uint32(g) {
-					continue outer
+					access = stat_t.Mode&perm.Group() > 0
 				}
 			}
 		}
 
-		return os.ErrPermission
+		if !access {
+			return os.ErrPermission
+		}
 	}
 
 	return nil
@@ -143,7 +146,7 @@ outer:
 
 func (u *user) chownNewFile(f *os.File, parent os.FileInfo) error {
 	if parent.Mode()&os.ModeSetgid == 0 {
-		return f.Chown(u.Uid, u.Gid)
+		return f.Chown(u.UID, u.GID)
 	}
 
 	stat_t, ok := parent.Sys().(*syscall.Stat_t)
@@ -151,12 +154,12 @@ func (u *user) chownNewFile(f *os.File, parent os.FileInfo) error {
 		return ErrTypeAssertion
 	}
 
-	return f.Chown(u.Uid, int(stat_t.Gid))
+	return f.Chown(u.UID, int(stat_t.Gid))
 }
 
 func (u *user) chownNewFolderOrSymlink(name string, parent os.FileInfo) error {
 	if parent.Mode()&os.ModeSetgid == 0 {
-		return os.Lchown(name, u.Uid, u.Gid)
+		return os.Lchown(name, u.UID, u.GID)
 	}
 
 	stat_t, ok := parent.Sys().(*syscall.Stat_t)
@@ -164,5 +167,5 @@ func (u *user) chownNewFolderOrSymlink(name string, parent os.FileInfo) error {
 		return ErrTypeAssertion
 	}
 
-	return os.Lchown(name, u.Uid, int(stat_t.Gid))
+	return os.Lchown(name, u.UID, int(stat_t.Gid))
 }
