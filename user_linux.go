@@ -259,18 +259,8 @@ func (u *user) Readlink(name string) (string, error) {
 func (u *user) Remove(name string) error {
 	dirname := filepath.Dir(name)
 
-	// Can execute all parent directories?
-	if err := u.canTraverseParents(dirname); err != nil {
-		return err
-	}
-
 	// Has write permissions
-	d, err := os.Open(dirname)
-	if err != nil {
-		return err
-	}
-
-	stat, err := d.Stat()
+	stat, err := u.Stat(dirname)
 	if err != nil {
 		return err
 	}
@@ -278,6 +268,17 @@ func (u *user) Remove(name string) error {
 	// Can delete file?
 	if err = u.checkPermission(stat, Write, Execute); err != nil {
 		return err
+	}
+
+	if stat.Mode()&os.ModeSticky > 0 {
+		stat, err = os.Lstat(name)
+		if err != nil {
+			return err
+		}
+
+		if stat.Sys().(*syscall.Stat_t).Uid != uint32(u.UID) && u.UID > 0 {
+			return os.ErrPermission
+		}
 	}
 
 	return os.Remove(name)
