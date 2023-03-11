@@ -77,9 +77,13 @@ func (t Tree) CreateTree() error {
 	return nil
 }
 
+func (t Tree) Close() {
+	os.RemoveAll(t.Root)
+}
+
 var i int
 
-func (t *Tree) AssertSuccess(err error) {
+func (t Tree) AssertSuccess(err error) {
 	i++
 
 	if err != nil {
@@ -87,7 +91,7 @@ func (t *Tree) AssertSuccess(err error) {
 	}
 }
 
-func (t *Tree) AssertDenied(err error) {
+func (t Tree) AssertDenied(err error) {
 	i++
 
 	if !os.IsPermission(err) {
@@ -95,7 +99,7 @@ func (t *Tree) AssertDenied(err error) {
 	}
 }
 
-func (t *Tree) AssertOwnership(path string, uid int, gid int) {
+func (t Tree) AssertOwnership(path string, uid int, gid int) {
 	i++
 
 	fi, err := os.Stat(path)
@@ -115,31 +119,33 @@ func (t *Tree) AssertOwnership(path string, uid int, gid int) {
 	}
 }
 
-func (t Tree) Close() {
-	os.RemoveAll(t.Root)
-}
-
-func Test(t *testing.T) {
-	tree := New(t)
-
-	if tree == nil {
+func (t *Tree) Test(c func(tree Tree)) {
+	if t == nil {
 		return
 	}
 
-	defer tree.Close()
+	defer t.Close()
 
-	user1 := User{UID: 1000, GID: 1000}.SedeuidOS()
-	user2 := User{UID: 1001, GID: 1000}.SedeuidOS()
-
-	CheckFileWrite(tree, user1, user2)
-
-	user1 = User{UID: 1000, GID: 1000}.OS()
-	user2 = User{UID: 1001, GID: 1000}.OS()
-
-	CheckFileWrite(tree, user1, user2)
+	c(*t)
 }
 
-func CheckFileWrite(tree *Tree, user1, user2 OS) {
+func TestFileWrite(t *testing.T) {
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000}.SedeuidOS()
+		user2 := User{UID: 1001, GID: 1000}.SedeuidOS()
+
+		CheckFileWrite(tree, user1, user2)
+	})
+
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000}.OS()
+		user2 := User{UID: 1001, GID: 1000}.OS()
+
+		CheckFileWrite(tree, user1, user2)
+	})
+}
+
+func CheckFileWrite(tree Tree, user1, user2 OS) {
 	root := tree.Root
 	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "a", "f"), nil, 0644))
 	tree.AssertSuccess(user1.WriteFile(filepath.Join(root, "a", "f"), nil, 0644))
@@ -150,6 +156,34 @@ func CheckFileWrite(tree *Tree, user1, user2 OS) {
 	tree.AssertOwnership(filepath.Join(root, "c", "f"), 1000, 1001)
 	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "f"), nil, 0644))
 	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "e", "f"), nil, 0644))
+}
+
+func TestRemove(t *testing.T) {
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000}.SedeuidOS()
+		user2 := User{UID: 1002, GID: 1000}.SedeuidOS()
+
+		CheckRemove(tree, user1, user2)
+	})
+
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000}.OS()
+		user2 := User{UID: 1002, GID: 1000}.OS()
+
+		CheckRemove(tree, user1, user2)
+	})
+}
+
+func CheckRemove(tree Tree, user1, user2 OS) {
+	path := filepath.Join(tree.Root, "b", "f")
+	tree.AssertSuccess(user1.WriteFile(path, nil, 0644))
+	tree.AssertOwnership(path, 1000, 1000)
+	tree.AssertSuccess(user2.Remove(path))
+	tree.AssertSuccess(os.Chmod(filepath.Join(tree.Root, "b"), 0030|os.ModeSticky))
+	tree.AssertSuccess(user1.WriteFile(path, nil, 0644))
+	tree.AssertOwnership(path, 1000, 1000)
+	tree.AssertDenied(user2.Remove(path))
+	tree.AssertSuccess(user1.Remove(path))
 }
 
 func (u User) SedeuidOS() OS {

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"syscall"
 	"time"
+
+	"github.com/joshlf/go-acl"
 )
 
 func (u User) OS() OS {
@@ -120,26 +122,9 @@ func (u *user) Lchown(name string, uid, gid int) error {
 //}
 
 func (u *user) Mkdir(name string, perm os.FileMode) error {
-	dirname := filepath.Dir(name)
-
-	// Can execute all parent directories?
-	if err := u.canTraverseParents(dirname); err != nil {
-		return err
-	}
-
-	// Has write permissions
-	d, err := os.Open(dirname)
+	// Check whether we can write in the parent directory
+	stat, err := u.canWriteInDirOf(name)
 	if err != nil {
-		return err
-	}
-
-	stat, err := d.Stat()
-	if err != nil {
-		return err
-	}
-
-	// Can create file?
-	if err = u.checkPermission(stat, Write, Execute); err != nil {
 		return err
 	}
 
@@ -257,27 +242,16 @@ func (u *user) Readlink(name string) (string, error) {
 }
 
 func (u *user) Remove(name string) error {
-	dirname := filepath.Dir(name)
-
-	// Has write permissions
-	stat, err := u.Stat(dirname)
+	// Check whether we can write in the parent directory
+	stat, err := u.canWriteInDirOf(name)
 	if err != nil {
 		return err
 	}
 
-	// Can delete file?
-	if err = u.checkPermission(stat, Write, Execute); err != nil {
-		return err
-	}
-
 	if stat.Mode()&os.ModeSticky > 0 {
-		stat, err = os.Lstat(name)
+		err = u.LcheckOwnership(name)
 		if err != nil {
 			return err
-		}
-
-		if stat.Sys().(*syscall.Stat_t).Uid != uint32(u.UID) && u.UID > 0 {
-			return os.ErrPermission
 		}
 	}
 
@@ -424,29 +398,11 @@ func endsWithDot(path string) bool {
 }
 
 func (u *user) Rename(oldpath, newpath string) error {
-	dirname := filepath.Dir(oldpath)
-
-	// Has write permissions
-	stat, err := u.Stat(dirname)
-	if err != nil {
+	if _, err := u.canWriteInDirOf(oldpath); err != nil {
 		return err
 	}
 
-	// Can delete file?
-	if err = u.checkPermission(stat, Write, Execute); err != nil {
-		return err
-	}
-
-	dirname = filepath.Dir(newpath)
-
-	// Has write permissions
-	stat, err = u.Stat(dirname)
-	if err != nil {
-		return err
-	}
-
-	// Can write file?
-	if err = u.checkPermission(stat, Write, Execute); err != nil {
+	if _, err := u.canWriteInDirOf(newpath); err != nil {
 		return err
 	}
 
@@ -454,15 +410,8 @@ func (u *user) Rename(oldpath, newpath string) error {
 }
 
 func (u *user) Symlink(oldname, newname string) error {
-	dirname := filepath.Dir(newname)
-
-	stat, err := u.Stat(dirname)
+	stat, err := u.canWriteInDirOf(newname)
 	if err != nil {
-		return err
-	}
-
-	// Can write file?
-	if err = u.checkPermission(stat, Write, Execute); err != nil {
 		return err
 	}
 
@@ -479,7 +428,12 @@ func (u *user) Truncate(name string, size int64) error {
 		return err
 	}
 
-	if err = u.checkPermission(stat, Write); err != nil {
+	acl, err := acl.Get(name)
+	if err != nil {
+		return err
+	}
+
+	if err = u.checkPermission(stat, acl, Write); err != nil {
 		return err
 	}
 
@@ -526,8 +480,13 @@ func (u *user) Create(name string) (*os.File, error) {
 		return nil, err
 	}
 
+	acl, err := acl.Get(name)
+	if err != nil {
+		return nil, err
+	}
+
 	// Can create file?
-	if err = u.checkPermission(stat, Write, Execute); err != nil {
+	if err = u.checkPermission(stat, acl, Write, Execute); err != nil {
 		return nil, err
 	}
 
@@ -552,10 +511,23 @@ func (u *user) Open(name string) (*os.File, error) {
 
 	stat, err := f.Stat()
 	if err != nil {
+		f.Close()
 		return nil, err
 	}
 
-	return f, u.checkPermission(stat, Read)
+	acl, err := acl.FGet(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	err = u.checkPermission(stat, acl, Read)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	return f, nil
 }
 
 func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
@@ -583,13 +555,23 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 				return nil, err
 			}
 
+			a, err := acl.Get(name)
+			if os.IsNotExist(err) {
+				// The file disappeared in between OpenFile and Stat
+				// Retry exclusive OpenFile, it makes no sense to return
+				// file not found.
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+
 			p := Write
 
 			if perm&fs.FileMode(os.O_RDONLY) > 0 {
 				p = Read
 			}
 
-			if err = u.checkPermission(stat, p); err != nil {
+			if err = u.checkPermission(stat, a, p); err != nil {
 				return nil, err
 			}
 
@@ -619,8 +601,16 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 		return nil, err
 	}
 
+	a, err := acl.FGet(f)
+	if err != nil {
+		os.Remove(name) //nolint:errcheck
+		f.Close()
+
+		return nil, err
+	}
+
 	// Can create file?
-	if err = u.checkPermission(stat, Write); err != nil {
+	if err = u.checkPermission(stat, a, Write); err != nil {
 		os.Remove(name) //nolint:errcheck
 		f.Close()
 
