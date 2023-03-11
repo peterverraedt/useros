@@ -39,20 +39,8 @@ const (
 	Execute Permission = 1
 )
 
-func (p Permission) User() uint32 {
-	return uint32(p) * 0100
-}
-
-func (p Permission) Group() uint32 {
-	return uint32(p) * 010
-}
-
-func (p Permission) Other() uint32 {
-	return uint32(p)
-}
-
-func (p Permission) ACL() os.FileMode {
-	return os.FileMode(p)
+func (p Permission) Check(m os.FileMode) bool {
+	return uint32(p)&uint32(m) > 0
 }
 
 func (u *user) CheckPermission(name string, permission Permission) error {
@@ -158,9 +146,9 @@ func (u *user) checkPermission(stat os.FileInfo, a acl.ACL, perms ...Permission)
 
 		switch {
 		case stat_t.Uid == uint32(u.UID):
-			access = stat_t.Mode&perm.User() > 0
+			access = perm.Check(stat.Mode() >> 6)
 		case find(a, acl.TagUser, u.UID, &aclmode):
-			access = aclmode&aclmask(a)&perm.ACL() > 0
+			access = perm.Check(aclmode & aclmask(a))
 		default:
 			foundGroup := false
 
@@ -168,18 +156,18 @@ func (u *user) checkPermission(stat os.FileInfo, a acl.ACL, perms ...Permission)
 
 			for _, g := range groups {
 				if stat_t.Gid == uint32(g) {
-					access = access || stat_t.Mode&(uint32(mask)*010)&perm.Group() > 0
+					access = access || perm.Check(stat.Mode()>>3&mask)
 					foundGroup = true
 				}
 
 				if find(a, acl.TagGroup, u.GID, &aclmode) {
-					access = access || aclmode&mask&perm.ACL() > 0
+					access = access || perm.Check(aclmode&mask)
 					foundGroup = true
 				}
 			}
 
 			if !foundGroup {
-				access = stat_t.Mode&perm.Other() > 0
+				access = perm.Check(stat.Mode())
 			}
 		}
 
