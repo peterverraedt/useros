@@ -66,8 +66,6 @@ func (u *user) LcheckPermission(name string, permission Permission) error {
 	return u.checkPermission(stat, permission)
 }
 
-// TODO: sticky bit and symlinks
-// sudo sysctl fs.protected_symlinks
 func (u *user) canTraverseParents(name string) error {
 	name, err := filepath.Abs(name)
 	if err != nil {
