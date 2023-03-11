@@ -426,18 +426,8 @@ func endsWithDot(path string) bool {
 func (u *user) Rename(oldpath, newpath string) error {
 	dirname := filepath.Dir(oldpath)
 
-	// Can execute all parent directories?
-	if err := u.canTraverseParents(dirname); err != nil {
-		return err
-	}
-
 	// Has write permissions
-	d, err := os.Open(dirname)
-	if err != nil {
-		return err
-	}
-
-	stat, err := d.Stat()
+	stat, err := u.Stat(dirname)
 	if err != nil {
 		return err
 	}
@@ -449,18 +439,8 @@ func (u *user) Rename(oldpath, newpath string) error {
 
 	dirname = filepath.Dir(newpath)
 
-	// Can execute all parent directories?
-	if err = u.canTraverseParents(dirname); err != nil {
-		return err
-	}
-
 	// Has write permissions
-	d, err = os.Open(dirname)
-	if err != nil {
-		return err
-	}
-
-	stat, err = d.Stat()
+	stat, err = u.Stat(dirname)
 	if err != nil {
 		return err
 	}
@@ -476,18 +456,7 @@ func (u *user) Rename(oldpath, newpath string) error {
 func (u *user) Symlink(oldname, newname string) error {
 	dirname := filepath.Dir(newname)
 
-	// Can execute all parent directories?
-	if err := u.canTraverseParents(dirname); err != nil {
-		return err
-	}
-
-	// Has write permissions
-	d, err := os.Open(dirname)
-	if err != nil {
-		return err
-	}
-
-	stat, err := d.Stat()
+	stat, err := u.Stat(dirname)
 	if err != nil {
 		return err
 	}
@@ -552,18 +521,7 @@ func (u *user) Lstat(name string) (os.FileInfo, error) {
 func (u *user) Create(name string) (*os.File, error) {
 	dirname := filepath.Dir(name)
 
-	// Can execute all parent directories?
-	if err := u.canTraverseParents(dirname); err != nil {
-		return nil, err
-	}
-
-	// Has write permissions
-	d, err := os.Open(dirname)
-	if err != nil {
-		return nil, err
-	}
-
-	stat, err := d.Stat()
+	stat, err := u.Stat(dirname)
 	if err != nil {
 		return nil, err
 	}
