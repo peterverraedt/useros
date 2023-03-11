@@ -1,7 +1,7 @@
 //go:build linux
 // +build linux
 
-package virtos
+package useros
 
 import (
 	"io"
@@ -13,7 +13,60 @@ import (
 	"time"
 )
 
-func (u *User) Chmod(name string, mode os.FileMode) error {
+func (u User) OS() OS {
+	// We should run as root, otherwise return the default os implementation
+	if syscall.Geteuid() > 0 {
+		return &def{}
+	}
+
+	// Assign default values if necessary
+	if u.Uid < 0 {
+		u.Uid = syscall.Geteuid()
+	}
+
+	if u.Gid < 0 {
+		u.Gid = syscall.Getegid()
+	}
+
+	groups, _ := syscall.Getgroups() //nolint:errcheck
+
+	if len(u.Groups) == 0 {
+		u.Groups = groups
+	}
+
+	// Check whether we are impersonating a user
+	if u.Uid == syscall.Geteuid() && u.Gid == syscall.Getegid() && equal(u.Groups, groups) {
+		return &def{}
+	}
+
+	return &user{u}
+}
+
+func equal(a, b []int) bool {
+	for _, k := range a {
+		if !contains(b, k) {
+			return false
+		}
+	}
+
+	return len(a) == len(b)
+}
+
+func contains(a []int, v int) bool {
+	for _, k := range a {
+		if k == v {
+			return true
+		}
+	}
+
+	return false
+}
+
+type user struct {
+	User
+}
+
+func (u *user) Chmod(name string, mode os.FileMode) error {
 	f, err := u.OpenFile(name, os.O_RDWR, 0)
 	if err != nil {
 		return err
@@ -24,7 +77,7 @@ func (u *User) Chmod(name string, mode os.FileMode) error {
 	return f.Chmod(mode)
 }
 
-func (u *User) Chown(name string, uid, gid int) error {
+func (u *user) Chown(name string, uid, gid int) error {
 	f, err := u.OpenFile(name, os.O_RDWR, 0)
 	if err != nil {
 		return err
@@ -35,7 +88,7 @@ func (u *User) Chown(name string, uid, gid int) error {
 	return f.Chown(uid, gid)
 }
 
-func (u *User) Chtimes(name string, atime, mtime time.Time) error {
+func (u *user) Chtimes(name string, atime, mtime time.Time) error {
 	// Can execute all parent directories?
 	if err := u.canTraverseParents(name); err != nil {
 		return err
@@ -48,7 +101,7 @@ func (u *User) Chtimes(name string, atime, mtime time.Time) error {
 	return os.Chtimes(name, atime, mtime)
 }
 
-func (u *User) Lchown(name string, uid, gid int) error {
+func (u *user) Lchown(name string, uid, gid int) error {
 	// Can execute all parent directories?
 	if err := u.canTraverseParents(name); err != nil {
 		return err
@@ -62,11 +115,11 @@ func (u *User) Lchown(name string, uid, gid int) error {
 }
 
 // We're not implementing hardlinks
-//func (u *User) Link(oldname, newname string) error {
+//func (u *user) Link(oldname, newname string) error {
 //    return os.ErrPermission
 //}
 
-func (u *User) Mkdir(name string, perm os.FileMode) error {
+func (u *user) Mkdir(name string, perm os.FileMode) error {
 	dirname := filepath.Dir(name)
 
 	// Can execute all parent directories?
@@ -98,7 +151,7 @@ func (u *User) Mkdir(name string, perm os.FileMode) error {
 	return u.chownNewFolderOrSymlink(name, stat)
 }
 
-func (u *User) MkdirAll(path string, perm os.FileMode) error {
+func (u *user) MkdirAll(path string, perm os.FileMode) error {
 	// Fast path: if we can tell whether path is a directory or file, stop with success or error.
 	dir, err := u.Stat(path)
 	if err == nil {
@@ -146,7 +199,7 @@ func (u *User) MkdirAll(path string, perm os.FileMode) error {
 	return nil
 }
 
-func (u *User) ReadFile(name string) ([]byte, error) {
+func (u *user) ReadFile(name string) ([]byte, error) {
 	f, err := u.Open(name)
 	if err != nil {
 		return nil, err
@@ -194,7 +247,7 @@ func (u *User) ReadFile(name string) ([]byte, error) {
 	}
 }
 
-func (u *User) Readlink(name string) (string, error) {
+func (u *user) Readlink(name string) (string, error) {
 	// Can execute all parent directories?
 	if err := u.canTraverseParents(name); err != nil {
 		return "", err
@@ -203,7 +256,7 @@ func (u *User) Readlink(name string) (string, error) {
 	return os.Readlink(name)
 }
 
-func (u *User) Remove(name string) error {
+func (u *user) Remove(name string) error {
 	dirname := filepath.Dir(name)
 
 	// Can execute all parent directories?
@@ -230,7 +283,7 @@ func (u *User) Remove(name string) error {
 	return os.Remove(name)
 }
 
-func (u *User) RemoveAll(path string) error {
+func (u *user) RemoveAll(path string) error {
 	if path == "" {
 		// fail silently to retain compatibility with previous behavior
 		// of RemoveAll. See issue 28830.
@@ -369,7 +422,7 @@ func endsWithDot(path string) bool {
 	return false
 }
 
-func (u *User) Rename(oldpath, newpath string) error {
+func (u *user) Rename(oldpath, newpath string) error {
 	dirname := filepath.Dir(oldpath)
 
 	// Can execute all parent directories?
@@ -419,7 +472,7 @@ func (u *User) Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
-func (u *User) Symlink(oldname, newname string) error {
+func (u *user) Symlink(oldname, newname string) error {
 	dirname := filepath.Dir(newname)
 
 	// Can execute all parent directories?
@@ -450,7 +503,7 @@ func (u *User) Symlink(oldname, newname string) error {
 	return u.chownNewFolderOrSymlink(newname, stat)
 }
 
-func (u *User) Truncate(name string, size int64) error {
+func (u *user) Truncate(name string, size int64) error {
 	stat, err := u.Stat(name)
 	if err != nil {
 		return err
@@ -463,7 +516,7 @@ func (u *User) Truncate(name string, size int64) error {
 	return os.Truncate(name, size)
 }
 
-func (u *User) WriteFile(name string, data []byte, perm os.FileMode) error {
+func (u *user) WriteFile(name string, data []byte, perm os.FileMode) error {
 	f, err := u.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
@@ -477,7 +530,7 @@ func (u *User) WriteFile(name string, data []byte, perm os.FileMode) error {
 	return err
 }
 
-func (u *User) Stat(name string) (os.FileInfo, error) {
+func (u *user) Stat(name string) (os.FileInfo, error) {
 	// Can execute all parent directories?
 	if err := u.canTraverseParents(name); err != nil {
 		return nil, err
@@ -486,7 +539,7 @@ func (u *User) Stat(name string) (os.FileInfo, error) {
 	return os.Stat(name)
 }
 
-func (u *User) Lstat(name string) (os.FileInfo, error) {
+func (u *user) Lstat(name string) (os.FileInfo, error) {
 	// Can execute all parent directories?
 	if err := u.canTraverseParents(name); err != nil {
 		return nil, err
@@ -495,7 +548,7 @@ func (u *User) Lstat(name string) (os.FileInfo, error) {
 	return os.Lstat(name)
 }
 
-func (u *User) Create(name string) (*os.File, error) {
+func (u *user) Create(name string) (*os.File, error) {
 	dirname := filepath.Dir(name)
 
 	// Can execute all parent directories?
@@ -527,7 +580,7 @@ func (u *User) Create(name string) (*os.File, error) {
 	return f, u.chownNewFile(f, stat)
 }
 
-func (u *User) Open(name string) (*os.File, error) {
+func (u *user) Open(name string) (*os.File, error) {
 	// Can execute all parent directories?
 	if err := u.canTraverseParents(name); err != nil {
 		return nil, err
@@ -546,7 +599,7 @@ func (u *User) Open(name string) (*os.File, error) {
 	return f, u.checkPermission(stat, Read)
 }
 
-func (u *User) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
+func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 	// Can execute all parent directories?
 	if err := u.canTraverseParents(name); err != nil {
 		return nil, err
@@ -598,7 +651,7 @@ func (u *User) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 	return f, u.checkPermission(stat, Write)
 }
 
-func (u *User) ReadDir(name string) ([]os.DirEntry, error) {
+func (u *user) ReadDir(name string) ([]os.DirEntry, error) {
 	f, err := u.Open(name)
 	if err != nil {
 		return nil, err
