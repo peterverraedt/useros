@@ -1,6 +1,7 @@
 package useros
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -119,6 +120,21 @@ func (t Tree) AssertOwnership(path string, uid int, gid int) {
 	}
 }
 
+func (t Tree) AssertContent(path string, body []byte) {
+	i++
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.T.Errorf("%02d: %v", i, err)
+		return
+	}
+
+	if !bytes.Equal(content, body) {
+		t.T.Errorf("%02d: invalid content", i)
+		return
+	}
+}
+
 func (t *Tree) Test(c func(tree Tree)) {
 	if t == nil {
 		return
@@ -146,16 +162,27 @@ func TestFileWrite(t *testing.T) {
 }
 
 func CheckFileWrite(tree Tree, user1, user2 OS) {
+	body := []byte("hello")
 	root := tree.Root
-	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "a", "f"), nil, 0644))
-	tree.AssertSuccess(user1.WriteFile(filepath.Join(root, "a", "f"), nil, 0644))
+	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "a", "f"), body, 0600))
+	tree.AssertSuccess(user1.WriteFile(filepath.Join(root, "a", "f"), body, 0600))
+	tree.AssertContent(filepath.Join(root, "a", "f"), body)
+	_, err := user1.ReadFile(filepath.Join(root, "a", "f"))
+	tree.AssertSuccess(err)
+	_, err = user2.ReadFile(filepath.Join(root, "a", "f"))
+	tree.AssertDenied(err)
+	tree.AssertContent(filepath.Join(root, "a", "f"), body)
+	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "a", "f"), nil, 0600))
+	tree.AssertContent(filepath.Join(root, "a", "f"), body)
 	tree.AssertOwnership(filepath.Join(root, "a", "f"), 1000, 1000)
-	tree.AssertSuccess(user1.WriteFile(filepath.Join(root, "b", "f"), nil, 0644))
+	tree.AssertSuccess(user1.WriteFile(filepath.Join(root, "b", "f"), body, 0640))
+	_, err = user2.ReadFile(filepath.Join(root, "b", "f"))
+	tree.AssertDenied(err)
 	tree.AssertOwnership(filepath.Join(root, "b", "f"), 1000, 1000)
-	tree.AssertSuccess(user1.WriteFile(filepath.Join(root, "c", "f"), nil, 0644))
+	tree.AssertSuccess(user1.WriteFile(filepath.Join(root, "c", "f"), body, 0600))
 	tree.AssertOwnership(filepath.Join(root, "c", "f"), 1000, 1001)
-	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "f"), nil, 0644))
-	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "e", "f"), nil, 0644))
+	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "f"), body, 0600))
+	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "e", "f"), body, 0600))
 }
 
 func TestRemove(t *testing.T) {
@@ -176,11 +203,11 @@ func TestRemove(t *testing.T) {
 
 func CheckRemove(tree Tree, user1, user2 OS) {
 	path := filepath.Join(tree.Root, "b", "f")
-	tree.AssertSuccess(user1.WriteFile(path, nil, 0644))
+	tree.AssertSuccess(user1.WriteFile(path, nil, 0600))
 	tree.AssertOwnership(path, 1000, 1000)
 	tree.AssertSuccess(user2.Remove(path))
 	tree.AssertSuccess(os.Chmod(filepath.Join(tree.Root, "b"), 0030|os.ModeSticky))
-	tree.AssertSuccess(user1.WriteFile(path, nil, 0644))
+	tree.AssertSuccess(user1.WriteFile(path, nil, 0600))
 	tree.AssertOwnership(path, 1000, 1000)
 	tree.AssertDenied(user2.Remove(path))
 	tree.AssertSuccess(user1.Remove(path))

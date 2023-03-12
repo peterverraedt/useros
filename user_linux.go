@@ -428,12 +428,12 @@ func (u *user) Truncate(name string, size int64) error {
 		return err
 	}
 
-	acl, err := acl.Get(name)
+	a, err := acl.Get(name)
 	if err != nil {
 		return err
 	}
 
-	if err = u.checkPermission(stat, acl, Write); err != nil {
+	if err = u.checkPermission(stat, a, Write); err != nil {
 		return err
 	}
 
@@ -473,20 +473,8 @@ func (u *user) Lstat(name string) (os.FileInfo, error) {
 }
 
 func (u *user) Create(name string) (*os.File, error) {
-	dirname := filepath.Dir(name)
-
-	stat, err := u.Stat(dirname)
+	stat, err := u.canWriteInDirOf(name)
 	if err != nil {
-		return nil, err
-	}
-
-	acl, err := acl.Get(name)
-	if err != nil {
-		return nil, err
-	}
-
-	// Can create file?
-	if err = u.checkPermission(stat, acl, Write, Execute); err != nil {
 		return nil, err
 	}
 
@@ -515,13 +503,13 @@ func (u *user) Open(name string) (*os.File, error) {
 		return nil, err
 	}
 
-	acl, err := acl.FGet(f)
+	a, err := acl.FGet(f)
 	if err != nil {
 		f.Close()
 		return nil, err
 	}
 
-	err = u.checkPermission(stat, acl, Read)
+	err = u.checkPermission(stat, a, Read)
 	if err != nil {
 		f.Close()
 		return nil, err
