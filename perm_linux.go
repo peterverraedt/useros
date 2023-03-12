@@ -1,7 +1,6 @@
 package useros
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,39 +10,96 @@ import (
 	"github.com/joshlf/go-acl"
 )
 
-var ErrTypeAssertion = errors.New("type assertion")
+// returns: stat of parent dir, error
+func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL, error) {
+	// Root always has access if the directory exists
+	if u.UID == 0 {
+		stat, err := os.Stat(filepath.Dir(name))
+		if err != nil {
+			return nil, nil, err
+		}
 
-func (u *user) CheckOwnership(name string) error {
-	stat, err := os.Stat(name)
+		if !stat.IsDir() {
+			return nil, nil, syscall.ENOTDIR
+		}
+
+		a, err := acl.Get(filepath.Dir(name))
+
+		return stat, a, err
+	}
+
+	dirs, err := Directories(name)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	checked := make(map[string]struct{})
+
+	var (
+		stat fs.FileInfo
+		a    acl.ACL
+	)
+
+	for i, dir := range dirs {
+		// Do not double check directories, but always check the last one
+		if _, ok := checked[dir]; ok && i+1 < len(dirs) {
+			continue
+		}
+
+		stat, err = os.Stat(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if !stat.IsDir() {
+			return nil, nil, syscall.ENOTDIR
+		}
+
+		a, err = acl.Get(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		err = u.checkPermission(stat, a, Execute)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		checked[dir] = struct{}{}
+	}
+
+	// Check the last directory (directory of the inode) for the asked permission
+	if perm == Read || perm == Write {
+		return stat, nil, u.checkPermission(stat, a, perm)
+	}
+
+	return stat, a, nil
+}
+
+func (u User) gidForNewFiles(parent os.FileInfo) int {
+	if parent.Mode()&os.ModeSetgid == 0 {
+		return u.GID
+	}
+
+	stat_t, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok {
+		return u.GID
+	}
+
+	return int(stat_t.Gid)
+}
+
+func (u User) hasObjectAccess(name string, perm Permission) error {
+	// Root always has access if the object exists
+	if u.UID == 0 {
+		_, err := os.Stat(name)
 		return err
 	}
 
-	return u.checkOwnership(stat)
-}
-
-func (u *user) LcheckOwnership(name string) error {
-	stat, err := os.Lstat(name)
-	if err != nil {
+	if _, _, err := u.hasInodeAccess(name, Execute); err != nil {
 		return err
 	}
 
-	return u.checkOwnership(stat)
-}
-
-type Permission uint32
-
-const (
-	Read    Permission = 4
-	Write   Permission = 2
-	Execute Permission = 1
-)
-
-func (p Permission) Check(m os.FileMode) bool {
-	return uint32(p)&uint32(m) > 0
-}
-
-func (u *user) CheckPermission(name string, permission Permission) error {
 	stat, err := os.Stat(name)
 	if err != nil {
 		return err
@@ -54,85 +110,32 @@ func (u *user) CheckPermission(name string, permission Permission) error {
 		return err
 	}
 
-	return u.checkPermission(stat, a, permission)
+	return u.checkPermission(stat, a, perm)
 }
 
-func (u *user) canTraverseParents(name string) error {
-	dirs, err := Directories(name)
+func (u User) owns(name string) error {
+	stat, err := os.Stat(name)
 	if err != nil {
 		return err
 	}
 
-	checked := make(map[string]struct{})
-
-	for _, dir := range dirs {
-		if _, ok := checked[dir]; ok {
-			continue
-		}
-
-		stat, err := os.Stat(dir)
-		if err != nil {
-			return err
-		}
-
-		if !stat.IsDir() {
-			return syscall.ENOTDIR
-		}
-
-		acl, err := acl.Get(dir)
-		if err != nil {
-			return err
-		}
-
-		err = u.checkPermission(stat, acl, Execute)
-		if err != nil {
-			return err
-		}
-
-		checked[dir] = struct{}{}
-	}
-
-	return nil
+	return u.checkOwnership(stat)
 }
 
-func (u *user) canWriteInDirOf(name string) (fs.FileInfo, error) {
-	dirname := filepath.Dir(name)
-
-	// Can execute all parent directories?
-	if err := u.canTraverseParents(dirname); err != nil {
-		return nil, err
-	}
-
-	// Has write permissions
-	stat, err := os.Stat(dirname)
+func (u User) lowns(name string) error {
+	stat, err := os.Lstat(name)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	a, err := acl.Get(dirname)
-	if err != nil {
-		return nil, err
-	}
-
-	// Can create file?
-	return stat, u.checkPermission(stat, a, Write, Execute)
+	return u.checkOwnership(stat)
 }
 
-func (u *user) checkOwnership(stat fs.FileInfo) error {
-	stat_t, ok := stat.Sys().(*syscall.Stat_t)
-	if !ok {
-		return ErrTypeAssertion
-	}
-
-	if stat_t.Uid != uint32(u.UID) && u.UID > 0 {
-		return os.ErrPermission
-	}
-
-	return nil
+func (u User) chownNewFile(name string, gid int) error {
+	return os.Lchown(name, u.UID, gid)
 }
 
-// Check permissions
-func (u *user) checkPermission(stat os.FileInfo, a acl.ACL, perms ...Permission) error {
+func (u User) checkPermission(stat os.FileInfo, a acl.ACL, perms ...Permission) error {
 	stat_t, ok := stat.Sys().(*syscall.Stat_t)
 	if !ok {
 		return ErrTypeAssertion
@@ -209,28 +212,15 @@ func find(a acl.ACL, tag acl.Tag, id int, result *os.FileMode) bool {
 	return false
 }
 
-func (u *user) chownNewFile(f *os.File, parent os.FileInfo) error {
-	if parent.Mode()&os.ModeSetgid == 0 {
-		return f.Chown(u.UID, u.GID)
-	}
-
-	stat_t, ok := parent.Sys().(*syscall.Stat_t)
+func (u User) checkOwnership(stat fs.FileInfo) error {
+	stat_t, ok := stat.Sys().(*syscall.Stat_t)
 	if !ok {
 		return ErrTypeAssertion
 	}
 
-	return f.Chown(u.UID, int(stat_t.Gid))
-}
-
-func (u *user) chownNewFolderOrSymlink(name string, parent os.FileInfo) error {
-	if parent.Mode()&os.ModeSetgid == 0 {
-		return os.Lchown(name, u.UID, u.GID)
+	if stat_t.Uid != uint32(u.UID) && u.UID > 0 {
+		return os.ErrPermission
 	}
 
-	stat_t, ok := parent.Sys().(*syscall.Stat_t)
-	if !ok {
-		return ErrTypeAssertion
-	}
-
-	return os.Lchown(name, u.UID, int(stat_t.Gid))
+	return nil
 }
