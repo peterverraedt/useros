@@ -69,25 +69,41 @@ type user struct {
 }
 
 func (u *user) Chmod(name string, mode os.FileMode) error {
-	f, err := u.OpenFile(name, os.O_RDWR, 0)
-	if err != nil {
+	// Can execute all parent directories?
+	if err := u.canTraverseParents(name); err != nil {
 		return err
 	}
 
-	defer f.Close()
+	if err := u.CheckOwnership(name); err != nil {
+		return err
+	}
 
-	return f.Chmod(mode)
+	return os.Chmod(name, mode)
 }
 
 func (u *user) Chown(name string, uid, gid int) error {
-	f, err := u.OpenFile(name, os.O_RDWR, 0)
-	if err != nil {
+	// Can execute all parent directories?
+	if err := u.canTraverseParents(name); err != nil {
 		return err
 	}
 
-	defer f.Close()
+	if err := u.CheckOwnership(name); err != nil {
+		return err
+	}
 
-	return f.Chown(uid, gid)
+	if u.UID == 0 {
+		return os.Chown(name, uid, gid)
+	}
+
+	if uid != u.UID {
+		return os.ErrPermission
+	}
+
+	if gid != u.GID && !contains(u.Groups, gid) {
+		return os.ErrPermission
+	}
+
+	return os.Chown(name, uid, gid)
 }
 
 func (u *user) Chtimes(name string, atime, mtime time.Time) error {

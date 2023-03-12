@@ -8,6 +8,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 type Tree struct {
@@ -95,15 +96,33 @@ func (t Tree) AssertSuccess(err error) {
 func (t Tree) AssertDenied(err error) {
 	i++
 
+	if err == nil {
+		t.T.Errorf("%02d: succeeded but expected access denied", i)
+		return
+	}
+
 	if !os.IsPermission(err) {
-		t.T.Errorf("%02d: %v", i, err)
+		t.T.Errorf("%02d: %s", i, err)
+	}
+}
+
+func (t Tree) AssertNotExist(err error) {
+	i++
+
+	if err == nil {
+		t.T.Errorf("%02d: succeeded but expected no file", i)
+		return
+	}
+
+	if !os.IsNotExist(err) {
+		t.T.Errorf("%02d: %s", i, err)
 	}
 }
 
 func (t Tree) AssertOwnership(path string, uid int, gid int) {
 	i++
 
-	fi, err := os.Stat(path)
+	fi, err := os.Lstat(path)
 	if err != nil {
 		t.T.Errorf("%02d: %v", i, err)
 		return
@@ -183,6 +202,13 @@ func CheckFileWrite(tree Tree, user1, user2 OS) {
 	tree.AssertOwnership(filepath.Join(root, "c", "f"), 1000, 1001)
 	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "f"), body, 0600))
 	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "e", "f"), body, 0600))
+	_, err = user2.Create(filepath.Join(root, "a", "g"))
+	tree.AssertDenied(err)
+	f, err := user1.Create(filepath.Join(root, "a", "g"))
+	if f != nil {
+		f.Close()
+	}
+	tree.AssertSuccess(err)
 }
 
 func TestRemove(t *testing.T) {
@@ -213,6 +239,96 @@ func CheckRemove(tree Tree, user1, user2 OS) {
 	tree.AssertSuccess(user1.Remove(path))
 }
 
+func TestChownChmod(t *testing.T) {
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000, Groups: []int{1001}}.SedeuidOS()
+		user2 := User{UID: 1001, GID: 1000}.SedeuidOS()
+
+		CheckChownChmod(tree, user1, user2)
+	})
+
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000, Groups: []int{1001}}.OS()
+		user2 := User{UID: 1001, GID: 1000}.OS()
+
+		CheckChownChmod(tree, user1, user2)
+	})
+}
+
+func CheckChownChmod(tree Tree, user1, user2 OS) {
+	path := filepath.Join(tree.Root, "a", "f")
+	tree.AssertNotExist(user1.Chown(path, 1000, 1001))
+	tree.AssertNotExist(user1.Chmod(path, 0644))
+	tree.AssertSuccess(user1.WriteFile(path, nil, 0600))
+	tree.AssertOwnership(path, 1000, 1000)
+	tree.AssertSuccess(user1.Chown(path, 1000, 1001))
+	tree.AssertOwnership(path, 1000, 1001)
+	tree.AssertDenied(user1.Chown(path, 1001, 1000))
+	tree.AssertSuccess(user1.Chmod(path, 0644))
+	tree.AssertSuccess(user1.Chtimes(path, time.Time{}, time.Time{}))
+	tree.AssertDenied(user2.Chmod(path, 0644))
+	tree.AssertDenied(user2.Chtimes(path, time.Time{}, time.Time{}))
+	_, err := user1.Stat(path)
+	tree.AssertSuccess(err)
+	_, err = user2.Stat(path)
+	tree.AssertDenied(err)
+
+	link := filepath.Join(tree.Root, "a", "s")
+	tree.AssertSuccess(user1.Symlink("f", link))
+	tree.AssertOwnership(link, 1000, 1000)
+	tree.AssertOwnership(path, 1000, 1001)
+	tree.AssertSuccess(user1.Chown(path, 1000, 1000))
+	tree.AssertOwnership(link, 1000, 1000)
+	tree.AssertOwnership(path, 1000, 1000)
+	tree.AssertSuccess(user1.Lchown(link, 1000, 1001))
+	tree.AssertOwnership(link, 1000, 1001)
+	tree.AssertOwnership(path, 1000, 1000)
+	_, err = user1.Readlink(link)
+	tree.AssertSuccess(err)
+	_, err = user2.Readlink(link)
+	tree.AssertDenied(err)
+	_, err = user1.Stat(link)
+	tree.AssertSuccess(err)
+	_, err = user1.Lstat(link)
+	tree.AssertSuccess(err)
+	_, err = user2.Lstat(path)
+	tree.AssertDenied(err)
+	tree.AssertSuccess(user1.Rename(link, path))
+}
+
+func TestMkdir(t *testing.T) {
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000, Groups: []int{1001}}.SedeuidOS()
+		user2 := User{UID: 1001, GID: 1000}.SedeuidOS()
+
+		CheckMkdir(tree, user1, user2)
+	})
+
+	New(t).Test(func(tree Tree) {
+		user1 := User{UID: 1000, GID: 1000, Groups: []int{1001}}.OS()
+		user2 := User{UID: 1001, GID: 1000}.OS()
+
+		CheckMkdir(tree, user1, user2)
+	})
+}
+
+func CheckMkdir(tree Tree, user1, user2 OS) {
+	path := filepath.Join(tree.Root, "a", "x")
+	tree.AssertSuccess(user1.Mkdir(path, 0700))
+	tree.AssertOwnership(path, 1000, 1000)
+	tree.AssertSuccess(user1.WriteFile(filepath.Join(path, "f"), nil, 0600))
+	_, err := user1.ReadDir(path)
+	tree.AssertSuccess(err)
+	// The following check should succeed as rm -rf <path> works, but golang native implementation denies it.
+	//tree.AssertSuccess(user1.RemoveAll(path))
+	tree.AssertSuccess(user1.Chmod(filepath.Join(tree.Root, "a"), 0700))
+	tree.AssertSuccess(user1.RemoveAll(path))
+
+	path = filepath.Join(tree.Root, "a", "y", "z", "t")
+	tree.AssertDenied(user2.MkdirAll(path, 0700))
+	tree.AssertSuccess(user1.MkdirAll(path, 0700))
+}
+
 func (u User) SedeuidOS() OS {
 	return &def{
 		Before: u.setuid,
@@ -233,6 +349,10 @@ func (u User) setuid() {
 		}
 	}
 
+	if err := syscall.Setgroups(u.Groups); err != nil {
+		panic(err)
+	}
+
 	if u.UID != syscall.Geteuid() {
 		if err := syscall.Seteuid(u.UID); err != nil {
 			panic(err)
@@ -251,6 +371,10 @@ func (u User) unsetuid() {
 		if err := syscall.Setegid(syscall.Getgid()); err != nil {
 			panic(err)
 		}
+	}
+
+	if err := syscall.Setgroups(nil); err != nil {
+		panic(err)
 	}
 
 	setuidLock.Unlock()
