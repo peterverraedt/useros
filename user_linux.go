@@ -8,11 +8,6 @@ import (
 )
 
 func (u User) os() OS {
-	// We should run as root, otherwise return the default os implementation
-	if syscall.Geteuid() > 0 {
-		return &def{}
-	}
-
 	// Assign default values if necessary
 	if u.UID < 0 {
 		u.UID = syscall.Geteuid()

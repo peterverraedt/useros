@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// Default OS implementation is a simple wrapper around the pkg.go.dev/os functions.
+// Mainly usefull in situations where conditionally the default OS or a user view to the OS is needed.
+func Default() OS {
+	return &def{}
+}
+
 type def struct {
 	Before, After func()
 }
