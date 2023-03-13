@@ -68,8 +68,8 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 		checked[dir] = struct{}{}
 	}
 
-	// Check the last directory (directory of the inode) for the asked permission
-	if perm == Read || perm == Write {
+	// Check the last directory (directory of the inode) for the write permission if asked
+	if perm == Write {
 		return stat, nil, u.checkPermission(stat, a, perm)
 	}
 

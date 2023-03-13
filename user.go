@@ -53,11 +53,11 @@ func (u User) CanWriteInode(path string) error {
 	return err
 }
 
-// CanExecuteInode checks whether the user can "execute" the file inode at the specified path,
-// i.e. whether the inode can be statted.
+// CanReadInode checks whether the user can read the file inode at the specified path,
+// i.e. whether the inode can be statted (= execution bit on the parent directory).
 // The inode itself doesn't have to exist, its parent directory should exist.
 // If nil is returned, the inode is readable by the user.
-func (u User) CanExecuteInode(path string) error {
+func (u User) CanReadInode(path string) error {
 	_, _, err := u.hasInodeAccess(path, Execute)
 	return err
 }
@@ -95,7 +95,7 @@ type user struct {
 }
 
 func (u *user) Chmod(name string, mode os.FileMode) error {
-	if err := u.CanExecuteInode(name); err != nil {
+	if err := u.CanReadInode(name); err != nil {
 		return err
 	}
 
@@ -107,7 +107,7 @@ func (u *user) Chmod(name string, mode os.FileMode) error {
 }
 
 func (u *user) Chown(name string, uid, gid int) error {
-	if err := u.CanExecuteInode(name); err != nil {
+	if err := u.CanReadInode(name); err != nil {
 		return err
 	}
 
@@ -132,7 +132,7 @@ func (u *user) Chown(name string, uid, gid int) error {
 
 // TODO: check permission checks
 func (u *user) Chtimes(name string, atime, mtime time.Time) error {
-	if err := u.CanExecuteInode(name); err != nil {
+	if err := u.CanReadInode(name); err != nil {
 		return err
 	}
 
@@ -144,7 +144,7 @@ func (u *user) Chtimes(name string, atime, mtime time.Time) error {
 }
 
 func (u *user) Lchown(name string, uid, gid int) error {
-	if err := u.CanExecuteInode(name); err != nil {
+	if err := u.CanReadInode(name); err != nil {
 		return err
 	}
 
@@ -277,7 +277,7 @@ func (u *user) ReadFile(name string) ([]byte, error) {
 }
 
 func (u *user) Readlink(name string) (string, error) {
-	if _, _, err := u.hasInodeAccess(name, Execute); err != nil {
+	if err := u.CanReadInode(name); err != nil {
 		return "", err
 	}
 
@@ -497,7 +497,7 @@ func (u *user) WriteFile(name string, data []byte, perm os.FileMode) error {
 }
 
 func (u *user) Stat(name string) (os.FileInfo, error) {
-	if err := u.CanExecuteInode(name); err != nil {
+	if err := u.CanReadInode(name); err != nil {
 		return nil, err
 	}
 
@@ -505,7 +505,7 @@ func (u *user) Stat(name string) (os.FileInfo, error) {
 }
 
 func (u *user) Lstat(name string) (os.FileInfo, error) {
-	if err := u.CanExecuteInode(name); err != nil {
+	if err := u.CanReadInode(name); err != nil {
 		return nil, err
 	}
 
