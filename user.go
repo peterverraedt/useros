@@ -7,8 +7,6 @@ import (
 	"sort"
 	"syscall"
 	"time"
-
-	"github.com/joshlf/go-acl"
 )
 
 type User struct {
@@ -465,17 +463,7 @@ func (u *user) Symlink(oldname, newname string) error {
 }
 
 func (u *user) Truncate(name string, size int64) error {
-	stat, err := u.Stat(name)
-	if err != nil {
-		return err
-	}
-
-	a, err := acl.Get(name)
-	if err != nil {
-		return err
-	}
-
-	if err = u.checkPermission(stat, a, Write); err != nil {
+	if err := u.CanWriteObject(name); err != nil {
 		return err
 	}
 
@@ -579,7 +567,7 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 	}
 
 	// Can create file?
-	if err = u.checkPermission(stat, a, Write); err != nil {
+	if err = u.checkPermission(stat, a, Write); err != nil && u.UID > 0 {
 		os.Remove(name) //nolint:errcheck
 		f.Close()
 

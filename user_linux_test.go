@@ -231,9 +231,14 @@ func TestRemove(t *testing.T) {
 }
 
 func CheckRemove(tree Tree, user1, user2 OS) {
+	body := []byte("hello")
 	path := filepath.Join(tree.Root, "b", "f")
-	tree.AssertSuccess(user1.WriteFile(path, nil, 0600))
+	tree.AssertSuccess(user1.WriteFile(path, body, 0600))
 	tree.AssertOwnership(path, 1000, 1000)
+	tree.AssertDenied(user2.Truncate(path, 2))
+	tree.AssertContent(path, body)
+	tree.AssertSuccess(user1.Truncate(path, 2))
+	tree.AssertContent(path, []byte("he"))
 	tree.AssertSuccess(user2.Remove(path))
 	tree.AssertSuccess(os.Chmod(filepath.Join(tree.Root, "b"), 0030|os.ModeSticky))
 	tree.AssertSuccess(user1.WriteFile(path, nil, 0600))

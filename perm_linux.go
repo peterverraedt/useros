@@ -122,6 +122,10 @@ func (u User) owns(name string) error {
 		return err
 	}
 
+	if u.UID == 0 {
+		return nil
+	}
+
 	return u.checkOwnership(stat)
 }
 
@@ -129,6 +133,10 @@ func (u User) lowns(name string) error {
 	stat, err := os.Lstat(name)
 	if err != nil {
 		return err
+	}
+
+	if u.UID == 0 {
+		return nil
 	}
 
 	return u.checkOwnership(stat)
@@ -221,7 +229,7 @@ func (u User) checkOwnership(stat fs.FileInfo) error {
 		return ErrTypeAssertion
 	}
 
-	if stat_t.Uid != uint32(u.UID) && u.UID > 0 {
+	if stat_t.Uid != uint32(u.UID) {
 		return os.ErrPermission
 	}
 
