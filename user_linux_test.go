@@ -307,14 +307,14 @@ func CheckChownChmod(tree Tree, user1, user2 OS) {
 func TestMkdir(t *testing.T) {
 	New(t).Test(func(tree Tree) {
 		user1 := User{UID: 1000, GID: 1000, Groups: []int{1001}}.SedeuidOS()
-		user2 := User{UID: 1001, GID: 1000}.SedeuidOS()
+		user2 := User{UID: 1002, GID: 1000}.SedeuidOS()
 
 		CheckMkdir(tree, user1, user2)
 	})
 
 	New(t).Test(func(tree Tree) {
 		user1 := User{UID: 1000, GID: 1000, Groups: []int{1001}}.OS()
-		user2 := User{UID: 1001, GID: 1000}.OS()
+		user2 := User{UID: 1002, GID: 1000}.OS()
 
 		CheckMkdir(tree, user1, user2)
 	})
@@ -322,7 +322,7 @@ func TestMkdir(t *testing.T) {
 
 func CheckMkdir(tree Tree, user1, user2 OS) {
 	path := filepath.Join(tree.Root, "a", "x")
-	tree.AssertSuccess(user1.Mkdir(path, 0700))
+	tree.AssertSuccess(user1.Mkdir(path, 0740))
 	tree.AssertOwnership(path, 1000, 1000)
 	tree.AssertSuccess(user1.WriteFile(filepath.Join(path, "f"), nil, 0600))
 	_, err := user1.ReadDir(path)
@@ -335,6 +335,11 @@ func CheckMkdir(tree Tree, user1, user2 OS) {
 	path = filepath.Join(tree.Root, "a", "y", "z", "t")
 	tree.AssertDenied(user2.MkdirAll(path, 0700))
 	tree.AssertSuccess(user1.MkdirAll(path, 0700))
+
+	path = filepath.Join(tree.Root, "b", "x")
+	tree.AssertSuccess(user1.Mkdir(path, 0777))
+	_, err = user2.ReadDir(path)
+	tree.AssertSuccess(err)
 }
 
 func (u User) SedeuidOS() OS {

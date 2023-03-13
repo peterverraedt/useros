@@ -63,7 +63,7 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 			return nil, nil, err
 		}
 
-		err = u.checkPermission(stat, a, Execute)
+		err = on(u.checkPermission(stat, a, Execute), dir)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -72,8 +72,8 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 	}
 
 	// Check the last directory (directory of the inode) for the write permission if asked
-	if perm == Write {
-		return stat, nil, u.checkPermission(stat, a, perm)
+	if perm == Write && len(dirs) > 0 {
+		return stat, nil, on(u.checkPermission(stat, a, perm), dirs[len(dirs)-1])
 	}
 
 	return stat, a, nil
@@ -113,7 +113,7 @@ func (u User) hasObjectAccess(name string, perm Permission) error {
 		return err
 	}
 
-	return u.checkPermission(stat, a, perm)
+	return on(u.checkPermission(stat, a, perm), name)
 }
 
 func (u User) owns(name string) error {
@@ -234,4 +234,12 @@ func (u User) checkOwnership(stat fs.FileInfo) error {
 	}
 
 	return nil
+}
+
+func on(err error, path string) error {
+	if !os.IsPermission(err) {
+		return err
+	}
+
+	return os.NewSyscallError(fmt.Sprintf("open %s", path), syscall.EPERM)
 }
