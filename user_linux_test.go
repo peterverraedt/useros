@@ -5,6 +5,7 @@ package useros
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,20 +56,24 @@ func New(t *testing.T) *Tree {
 func (t Tree) CreateTree() error {
 	m := syscall.Umask(0)
 
+	d := User{
+		GID: 1000,
+	}.OS()
+
 	errs := []error{
-		os.Mkdir(filepath.Join(t.Root, "a"), 0300),
-		os.Mkdir(filepath.Join(t.Root, "b"), 0030),
-		os.Mkdir(filepath.Join(t.Root, "c"), 0003),
-		os.Chmod(filepath.Join(t.Root, "c"), 0003|os.ModeSetgid),
-		os.Mkdir(filepath.Join(t.Root, "a", "d"), 0300),
-		os.Mkdir(filepath.Join(t.Root, "a", "d", "e"), 0300),
-		os.Chown(filepath.Join(t.Root, "a"), 1000, 1000),
-		os.Chown(filepath.Join(t.Root, "b"), 1001, 1000),
-		os.Chown(filepath.Join(t.Root, "c"), 1001, 1001),
-		os.Chown(filepath.Join(t.Root, "a", "d"), 1001, 1000),
-		os.Chown(filepath.Join(t.Root, "a", "d", "e"), 1001, 1000),
-		os.Symlink(filepath.Join(t.Root, "a", "d"), filepath.Join(t.Root, "d")),
-		os.Symlink(filepath.Join(t.Root, "a", "d", "e"), filepath.Join(t.Root, "e")),
+		d.Mkdir(filepath.Join(t.Root, "a"), 0300),
+		d.Mkdir(filepath.Join(t.Root, "b"), 0030),
+		d.Mkdir(filepath.Join(t.Root, "c"), 0003),
+		d.Chmod(filepath.Join(t.Root, "c"), 0003|os.ModeSetgid),
+		d.Mkdir(filepath.Join(t.Root, "a", "d"), 0300),
+		d.Mkdir(filepath.Join(t.Root, "a", "d", "e"), 0300),
+		d.Chown(filepath.Join(t.Root, "a"), 1000, 1000),
+		d.Chown(filepath.Join(t.Root, "b"), 1001, 1000),
+		d.Chown(filepath.Join(t.Root, "c"), 1001, 1001),
+		d.Chown(filepath.Join(t.Root, "a", "d"), 1001, 1000),
+		d.Chown(filepath.Join(t.Root, "a", "d", "e"), 1001, 1000),
+		d.Symlink(filepath.Join(t.Root, "a", "d"), filepath.Join(t.Root, "d")),
+		d.Symlink(filepath.Join(t.Root, "a", "d", "e"), filepath.Join(t.Root, "e")),
 	}
 
 	syscall.Umask(m)
@@ -118,6 +123,19 @@ func (t Tree) AssertNotExist(err error) {
 	}
 
 	if !os.IsNotExist(err) {
+		t.T.Errorf("%02d: %s", i, err)
+	}
+}
+
+func (t Tree) AssertNotDir(err error) {
+	i++
+
+	if err == nil {
+		t.T.Errorf("%02d: succeeded but expected no dir", i)
+		return
+	}
+
+	if !errors.Is(err, syscall.ENOTDIR) {
 		t.T.Errorf("%02d: %s", i, err)
 	}
 }
@@ -215,6 +233,12 @@ func CheckFileWrite(tree Tree, user1, user2 OS) {
 	tree.AssertSuccess(err)
 
 	f, err = user1.OpenFile(filepath.Join(root, "a", "h"), syscall.O_RDONLY, 0755)
+	if f != nil {
+		f.Close()
+	}
+	tree.AssertNotExist(err)
+
+	f, err = user1.Open(filepath.Join(root, "a", "h"))
 	if f != nil {
 		f.Close()
 	}
@@ -360,6 +384,20 @@ func (u User) SedeuidOS() OS {
 		Before: u.setuid,
 		After:  u.unsetuid,
 	}
+}
+
+func TestCoverage(t *testing.T) {
+	if Default() == nil {
+		t.Error("default is nil")
+	}
+
+	New(t).Test(func(tree Tree) {
+		user1 := User{GID: 1000}.OS()
+
+		tree.AssertNotExist(user1.Mkdir(filepath.Join(tree.Root, "i", "do", "not", "exist"), 0755))
+		tree.AssertSuccess(user1.WriteFile(filepath.Join(tree.Root, "i"), nil, 0600))
+		tree.AssertNotDir(user1.Mkdir(filepath.Join(tree.Root, "i", "do"), 0755))
+	})
 }
 
 var setuidLock sync.Mutex
