@@ -3,6 +3,6 @@
 
 package useros
 
-func (u User) OS() OS {
+func (u User) os() OS {
 	return &def{}
 }

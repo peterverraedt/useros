@@ -3,20 +3,28 @@
 
 package useros
 
-func (u *user) hasInodeAccess(name string, perm Permission) (int, acl.ACL, error) {
+import (
+	"os"
+	"path/filepath"
+	"syscall"
+
+	"github.com/joshlf/go-acl"
+)
+
+func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL, error) {
 	stat, err := os.Stat(filepath.Dir(name))
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 
 	if !stat.IsDir() {
-		return 0, nil, syscall.ENOTDIR
+		return nil, nil, syscall.ENOTDIR
 	}
 
-	return 0, nil, nil
+	return stat, nil, nil
 }
 
-func (u *user) hasObjectAccess(name string, perm Permission) error {
+func (u User) hasObjectAccess(name string, perm Permission) error {
 	_, err := os.Stat(name)
 	return err
 }
