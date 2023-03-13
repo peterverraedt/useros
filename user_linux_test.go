@@ -365,6 +365,15 @@ func CheckMkdir(tree Tree, user1, user2 OS) {
 	tree.AssertSuccess(user1.WriteFile(filepath.Join(path, "f"), nil, 0600))
 	_, err := user1.ReadDir(path)
 	tree.AssertSuccess(err)
+
+	f, err := user1.Open(path)
+	tree.AssertSuccess(err)
+	if f != nil {
+		_, err = f.Readdir(-1)
+		tree.AssertSuccess(err)
+		f.Close()
+	}
+
 	// The following check should succeed as rm -rf <path> works, but golang native implementation denies it.
 	//tree.AssertSuccess(user1.RemoveAll(path))
 	tree.AssertSuccess(user1.Chmod(filepath.Join(tree.Root, "a"), 0700))

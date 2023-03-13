@@ -77,7 +77,7 @@ func (u User) OS() OS {
 // If nil is returned, the inode is writable by the user.
 func (u User) CanWriteInode(path string) error {
 	_, _, err := u.hasInodeAccess(path, Write)
-	return err
+	return logit(err)
 }
 
 // CanReadInode checks whether the user can read the file inode at the specified path,
@@ -86,35 +86,35 @@ func (u User) CanWriteInode(path string) error {
 // If nil is returned, the inode is readable by the user.
 func (u User) CanReadInode(path string) error {
 	_, _, err := u.hasInodeAccess(path, Execute)
-	return err
+	return logit(err)
 }
 
 // CanWriteObject checks whether the user can write to the file or directory at the specified path.
 // The file or directory needs to exist, as its permission bits are checked. Symlinks are followed.
 // If nil is returned, the object is writable by the user.
 func (u User) CanWriteObject(path string) error {
-	return u.hasObjectAccess(path, Write)
+	return logit(u.hasObjectAccess(path, Write))
 }
 
 // CanReadObject checks whether the user can read the file or directory at the specified path.
 // The file or directory needs to exist, as its permission bits are checked. Symlinks are followed.
 // If nil is returned, the object is readable by the user.
 func (u User) CanReadObject(path string) error {
-	return u.hasObjectAccess(path, Read)
+	return logit(u.hasObjectAccess(path, Read))
 }
 
 // Owns checks whether the user owns the file or directory at the specified path.
 // The file or directory needs to exist, as its owner is checked. Symlinks are followed.
 // If nil is returned, the object is owned by the user.
 func (u User) Owns(path string) error {
-	return u.owns(path)
+	return logit(u.owns(path))
 }
 
 // Lowns checks whether the user owns the file or directory at the specified path.
 // The file or directory needs to exist, as its owner is checked. Symlinks are not followed.
 // If nil is returned, the object is owned by the user.
 func (u User) Lowns(path string) error {
-	return u.lowns(path)
+	return logit(u.lowns(path))
 }
 
 type user struct {
@@ -123,88 +123,88 @@ type user struct {
 
 func (u *user) Chmod(name string, mode os.FileMode) error {
 	if err := u.CanReadInode(name); err != nil {
-		return err
+		return logit(err)
 	}
 
 	if err := u.Owns(name); err != nil {
-		return err
+		return logit(err)
 	}
 
-	return os.Chmod(name, mode)
+	return logit(os.Chmod(name, mode))
 }
 
 func (u *user) Chown(name string, uid, gid int) error {
 	if err := u.CanReadInode(name); err != nil {
-		return err
+		return logit(err)
 	}
 
 	if err := u.Owns(name); err != nil {
-		return err
+		return logit(err)
 	}
 
 	if u.UID == 0 {
-		return os.Chown(name, uid, gid)
+		return logit(os.Chown(name, uid, gid))
 	}
 
 	if uid != u.UID {
-		return os.ErrPermission
+		return logit(os.ErrPermission)
 	}
 
 	if gid != u.GID && !contains(u.Groups, gid) {
-		return os.ErrPermission
+		return logit(os.ErrPermission)
 	}
 
-	return os.Chown(name, uid, gid)
+	return logit(os.Chown(name, uid, gid))
 }
 
 // TODO: check permission checks
 func (u *user) Chtimes(name string, atime, mtime time.Time) error {
 	if err := u.CanReadInode(name); err != nil {
-		return err
+		return logit(err)
 	}
 
 	if err := u.CanWriteObject(name); err != nil {
-		return err
+		return logit(err)
 	}
 
-	return os.Chtimes(name, atime, mtime)
+	return logit(os.Chtimes(name, atime, mtime))
 }
 
 func (u *user) Lchown(name string, uid, gid int) error {
 	if err := u.CanReadInode(name); err != nil {
-		return err
+		return logit(err)
 	}
 
 	if err := u.Lowns(name); err != nil {
-		return err
+		return logit(err)
 	}
 
 	if u.UID == 0 {
-		return os.Lchown(name, uid, gid)
+		return logit(os.Lchown(name, uid, gid))
 	}
 
 	if uid != u.UID {
-		return os.ErrPermission
+		return logit(os.ErrPermission)
 	}
 
 	if gid != u.GID && !contains(u.Groups, gid) {
-		return os.ErrPermission
+		return logit(os.ErrPermission)
 	}
 
-	return os.Lchown(name, uid, gid)
+	return logit(os.Lchown(name, uid, gid))
 }
 
 func (u *user) Mkdir(name string, perm os.FileMode) error {
 	stat, _, err := u.hasInodeAccess(name, Write)
 	if err != nil {
-		return err
+		return logit(err)
 	}
 
 	if err = os.Mkdir(name, perm); err != nil {
-		return err
+		return logit(err)
 	}
 
-	return u.chownNewFile(name, u.gidForNewFiles(stat))
+	return logit(u.chownNewFile(name, u.gidForNewFiles(stat)))
 }
 
 func (u *user) MkdirAll(path string, perm os.FileMode) error {
@@ -212,10 +212,10 @@ func (u *user) MkdirAll(path string, perm os.FileMode) error {
 	dir, err := u.Stat(path)
 	if err == nil {
 		if dir.IsDir() {
-			return nil
+			return logit(nil)
 		}
 
-		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
+		return logit(&os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR})
 	}
 
 	// Slow path: make sure parent exists and then call Mkdir for path.
@@ -235,7 +235,7 @@ func (u *user) MkdirAll(path string, perm os.FileMode) error {
 		// Create parent.
 		err = u.MkdirAll(path[:j-1], perm)
 		if err != nil {
-			return err
+			return logit(err)
 		}
 	}
 
@@ -246,19 +246,19 @@ func (u *user) MkdirAll(path string, perm os.FileMode) error {
 		// double-checking that directory doesn't exist.
 		dir, err1 := u.Lstat(path)
 		if err1 == nil && dir.IsDir() {
-			return nil
+			return logit(nil)
 		}
 
-		return err
+		return logit(err)
 	}
 
-	return nil
+	return logit(nil)
 }
 
 func (u *user) ReadFile(name string) ([]byte, error) {
 	f, err := u.Open(name)
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	defer f.Close()
@@ -298,67 +298,69 @@ func (u *user) ReadFile(name string) ([]byte, error) {
 				err = nil
 			}
 
-			return data, err
+			return data, logit(err)
 		}
 	}
 }
 
 func (u *user) Readlink(name string) (string, error) {
 	if err := u.CanReadInode(name); err != nil {
-		return "", err
+		return "", logit(err)
 	}
 
-	return os.Readlink(name)
+	r, err := os.Readlink(name)
+
+	return r, logit(err)
 }
 
 func (u *user) Remove(name string) error {
 	stat, _, err := u.hasInodeAccess(name, Write)
 	if err != nil {
-		return err
+		return logit(err)
 	}
 
 	if stat.Mode()&os.ModeSticky > 0 {
 		err = u.Lowns(name)
 		if err != nil {
-			return err
+			return logit(err)
 		}
 	}
 
-	return os.Remove(name)
+	return logit(os.Remove(name))
 }
 
 func (u *user) RemoveAll(path string) error {
 	if path == "" {
 		// fail silently to retain compatibility with previous behavior
 		// of RemoveAll. See issue 28830.
-		return nil
+		return logit(nil)
 	}
 
 	// The rmdir system call does not permit removing ".",
 	// so we don't permit it either.
 	if endsWithDot(path) {
-		return &os.PathError{Op: "RemoveAll", Path: path, Err: syscall.EINVAL}
+		return logit(&os.PathError{Op: "RemoveAll", Path: path, Err: syscall.EINVAL})
 	}
 
 	// Simple case: if Remove works, we're done.
 	err := u.Remove(path)
 	if err == nil || os.IsNotExist(err) {
-		return nil
+		return logit(nil)
 	}
 
 	// Otherwise, is this a directory we need to recurse into?
 	dir, serr := u.Lstat(path)
 	if serr != nil {
 		if serr, ok := serr.(*os.PathError); ok && (os.IsNotExist(serr.Err) || serr.Err == syscall.ENOTDIR) {
-			return nil
+			return logit(nil)
 		}
 
-		return serr
+		return logit(serr)
 	}
 
 	if !dir.IsDir() {
 		// Not a directory; return the error from Remove.
-		return err
+		return logit(err)
 	}
 
 	// Remove contents & return first error.
@@ -368,10 +370,10 @@ func (u *user) RemoveAll(path string) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				// Already deleted by someone else.
-				return nil
+				return logit(nil)
 			}
 
-			return err
+			return logit(err)
 		}
 
 		const reqSize = 1024
@@ -427,7 +429,7 @@ func (u *user) RemoveAll(path string) error {
 		if len(names) < reqSize {
 			err1 := u.Remove(path)
 			if err1 == nil || os.IsNotExist(err1) {
-				return nil
+				return logit(nil)
 			}
 
 			if err != nil {
@@ -438,7 +440,7 @@ func (u *user) RemoveAll(path string) error {
 				// remove. Don't loop around to read
 				// the directory again. We'll probably
 				// just get the same error.
-				return err
+				return logit(err)
 			}
 		}
 	}
@@ -446,14 +448,14 @@ func (u *user) RemoveAll(path string) error {
 	// Remove directory.
 	err1 := u.Remove(path)
 	if err1 == nil || os.IsNotExist(err1) {
-		return nil
+		return logit(nil)
 	}
 
 	if err == nil {
 		err = err1
 	}
 
-	return err
+	return logit(err)
 }
 
 func endsWithDot(path string) bool {
@@ -468,11 +470,11 @@ func endsWithDot(path string) bool {
 
 func (u *user) Rename(oldpath, newpath string) error {
 	if err := u.CanWriteInode(oldpath); err != nil {
-		return err
+		return logit(err)
 	}
 
 	if err := u.CanWriteInode(newpath); err != nil {
-		return err
+		return logit(err)
 	}
 
 	return os.Rename(oldpath, newpath)
@@ -481,11 +483,11 @@ func (u *user) Rename(oldpath, newpath string) error {
 func (u *user) Symlink(oldname, newname string) error {
 	stat, _, err := u.hasInodeAccess(newname, Write)
 	if err != nil {
-		return err
+		return logit(err)
 	}
 
 	if err = os.Symlink(oldname, newname); err != nil {
-		return err
+		return logit(err)
 	}
 
 	return u.chownNewFile(newname, u.gidForNewFiles(stat))
@@ -493,7 +495,7 @@ func (u *user) Symlink(oldname, newname string) error {
 
 func (u *user) Truncate(name string, size int64) error {
 	if err := u.CanWriteObject(name); err != nil {
-		return err
+		return logit(err)
 	}
 
 	return os.Truncate(name, size)
@@ -502,7 +504,7 @@ func (u *user) Truncate(name string, size int64) error {
 func (u *user) WriteFile(name string, data []byte, perm os.FileMode) error {
 	f, err := u.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
-		return err
+		return logit(err)
 	}
 
 	_, err = f.Write(data)
@@ -510,23 +512,27 @@ func (u *user) WriteFile(name string, data []byte, perm os.FileMode) error {
 		err = err1
 	}
 
-	return err
+	return logit(err)
 }
 
 func (u *user) Stat(name string) (os.FileInfo, error) {
 	if err := u.CanReadInode(name); err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
-	return os.Stat(name)
+	s, err := os.Stat(name)
+
+	return s, logit(err)
 }
 
 func (u *user) Lstat(name string) (os.FileInfo, error) {
 	if err := u.CanReadInode(name); err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
-	return os.Lstat(name)
+	s, err := os.Lstat(name)
+
+	return s, logit(err)
 }
 
 type file struct {
@@ -536,38 +542,40 @@ type file struct {
 
 func (f *file) Chdir() error {
 	if err := f.u.checkDirExecuteOnly(f.Name()); err != nil {
-		return err
+		return logit(err)
 	}
 
-	return f.File.Chdir()
+	return logit(f.File.Chdir())
 }
 
 func (f *file) Chmod(mode os.FileMode) error {
-	return f.u.Chmod(f.Name(), mode)
+	return logit(f.u.Chmod(f.Name(), mode))
 }
 
 func (f *file) Chown(uid, gid int) error {
-	return f.u.Chown(f.Name(), uid, gid)
+	return logit(f.u.Chown(f.Name(), uid, gid))
 }
 
 func (f *file) Readdir(n int) ([]os.FileInfo, error) {
 	if err := f.u.checkDirExecuteOnly(f.Name()); err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
-	return f.File.Readdir(n)
+	l, err := f.File.Readdir(n)
+
+	return l, logit(err)
 }
 
 // Create checks for permissions and calls os.Create.
 func (u *user) Create(name string) (File, error) {
 	stat, _, err := u.hasInodeAccess(name, Write)
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	f, err := os.Create(name)
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	err = u.chownNewFile(name, u.gidForNewFiles(stat))
@@ -575,29 +583,29 @@ func (u *user) Create(name string) (File, error) {
 		f.Close()
 		os.Remove(name) //nolint:errcheck
 
-		return nil, err
+		return nil, logit(err)
 	}
 
-	return &file{f, u}, nil
+	return &file{f, u}, logit(nil)
 }
 
 func (u *user) Open(name string) (File, error) {
 	if err := u.CanReadObject(name); err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	f, err := os.Open(name)
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
-	return &file{f, u}, nil
+	return &file{f, u}, logit(nil)
 }
 
 func (u *user) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
 	stat, a, err := u.hasInodeAccess(name, Execute)
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	var f *os.File
@@ -622,17 +630,17 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
 				// file not found since O_EXCL was not passed as option.
 				continue
 			} else if err != nil {
-				return nil, err
+				return nil, logit(err)
 			}
 
 			f, err := os.OpenFile(name, flag, perm)
 			if err != nil {
-				return nil, err
+				return nil, logit(err)
 			}
 
 			return &file{f, u}, nil
 		} else if err != nil {
-			return nil, err
+			return nil, logit(err)
 		}
 
 		break
@@ -643,23 +651,23 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
 		os.Remove(name) //nolint:errcheck
 		f.Close()
 
-		return nil, err
+		return nil, logit(err)
 	}
 
 	if err = u.chownNewFile(name, u.gidForNewFiles(stat)); err != nil {
 		os.Remove(name) //nolint:errcheck
 		f.Close()
 
-		return nil, err
+		return nil, logit(err)
 	}
 
-	return &file{f, u}, nil
+	return &file{f, u}, logit(nil)
 }
 
 func (u *user) ReadDir(name string) ([]os.DirEntry, error) {
 	f, err := u.Open(name)
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	defer f.Close()
@@ -667,7 +675,7 @@ func (u *user) ReadDir(name string) ([]os.DirEntry, error) {
 	dirs, err := f.ReadDir(-1)
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name() < dirs[j].Name() })
 
-	return dirs, err
+	return dirs, logit(err)
 }
 
 func (u *user) EvalSymlinks(name string) (string, error) {
@@ -676,21 +684,21 @@ func (u *user) EvalSymlinks(name string) (string, error) {
 	// Resolve symlinks
 	intermediate, err := ResolveSymlinks(name)
 	if err != nil {
-		return "", err
+		return "", logit(err)
 	}
 
 	if len(intermediate) == 0 {
-		return "", os.ErrInvalid
+		return "", logit(os.ErrInvalid)
 	}
 
 	// Check whether directories are traversable
 	for _, dir := range intermediate[:len(intermediate)-1] {
 		if err := u.checkDirExecuteOnly(dir); err != nil {
-			return "", err
+			return "", logit(err)
 		}
 	}
 
-	return intermediate[len(intermediate)-1], nil
+	return intermediate[len(intermediate)-1], logit(nil)
 }
 
 func (u *user) Walk(root string, fn filepath.WalkFunc) error {
@@ -702,16 +710,16 @@ func (u *user) Walk(root string, fn filepath.WalkFunc) error {
 	}
 
 	if err == filepath.SkipDir || err == filepath.SkipAll {
-		return nil
+		return logit(nil)
 	}
 
-	return err
+	return logit(err)
 }
 
 // walk recursively descends path, calling walkFn.
 func (u *user) walk(path string, info fs.FileInfo, walkFn filepath.WalkFunc) error {
 	if !info.IsDir() {
-		return walkFn(path, info, nil)
+		return logit(walkFn(path, info, nil))
 	}
 
 	names, err := u.readDirNames(path)
@@ -724,7 +732,7 @@ func (u *user) walk(path string, info fs.FileInfo, walkFn filepath.WalkFunc) err
 		// by walkFn. walkFn may ignore err and return nil.
 		// If walkFn returns SkipDir or SkipAll, it will be handled by the caller.
 		// So walk should return whatever walkFn returns.
-		return err1
+		return logit(err)
 	}
 
 	for _, name := range names {
@@ -733,19 +741,19 @@ func (u *user) walk(path string, info fs.FileInfo, walkFn filepath.WalkFunc) err
 		fileInfo, err := u.Lstat(filename)
 		if err != nil {
 			if err := walkFn(filename, fileInfo, err); err != nil && err != filepath.SkipDir {
-				return err
+				return logit(err)
 			}
 		} else {
 			err = u.walk(filename, fileInfo, walkFn)
 			if err != nil {
 				if !fileInfo.IsDir() || err != filepath.SkipDir {
-					return err
+					return logit(err)
 				}
 			}
 		}
 	}
 
-	return nil
+	return logit(nil)
 }
 
 // readDirNames reads the directory named by dirname and returns
@@ -753,7 +761,7 @@ func (u *user) walk(path string, info fs.FileInfo, walkFn filepath.WalkFunc) err
 func (u *user) readDirNames(dirname string) ([]string, error) {
 	f, err := u.Open(dirname)
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	names, err := f.Readdirnames(-1)
@@ -761,10 +769,10 @@ func (u *user) readDirNames(dirname string) ([]string, error) {
 	f.Close()
 
 	if err != nil {
-		return nil, err
+		return nil, logit(err)
 	}
 
 	sort.Strings(names)
 
-	return names, nil
+	return names, logit(nil)
 }
