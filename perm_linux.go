@@ -79,6 +79,24 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 	return stat, a, nil
 }
 
+func (u User) checkDirExecuteOnly(name string) error {
+	stat, err := os.Stat(name)
+	if err != nil {
+		return err
+	}
+
+	if !stat.IsDir() {
+		return syscall.ENOTDIR
+	}
+
+	a, err := acl.Get(name)
+	if err != nil {
+		return err
+	}
+
+	return on(u.checkPermission(stat, a, Execute), name)
+}
+
 func (u User) gidForNewFiles(parent os.FileInfo) int {
 	if parent.Mode()&os.ModeSetgid == 0 {
 		return u.GID

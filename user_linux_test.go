@@ -207,7 +207,20 @@ func CheckFileWrite(tree Tree, user1, user2 OS) {
 	tree.AssertDenied(user2.WriteFile(filepath.Join(root, "d", "e", "f"), body, 0600))
 	_, err = user2.Create(filepath.Join(root, "a", "g"))
 	tree.AssertDenied(err)
+
 	f, err := user1.Create(filepath.Join(root, "a", "g"))
+	if f != nil {
+		f.Close()
+	}
+	tree.AssertSuccess(err)
+
+	f, err = user1.OpenFile(filepath.Join(root, "a", "h"), syscall.O_RDONLY, 0755)
+	if f != nil {
+		f.Close()
+	}
+	tree.AssertNotExist(err)
+
+	f, err = user1.OpenFile(filepath.Join(root, "a", "h"), syscall.O_RDONLY|syscall.O_CREAT, 0755)
 	if f != nil {
 		f.Close()
 	}

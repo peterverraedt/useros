@@ -24,6 +24,19 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 	return stat, nil, nil
 }
 
+func (u User) checkDirExecuteOnly(name string) error {
+	stat, err := os.Stat(name)
+	if err != nil {
+		return err
+	}
+
+	if !stat.IsDir() {
+		return syscall.ENOTDIR
+	}
+
+	return nil
+}
+
 func (u User) hasObjectAccess(name string, perm Permission) error {
 	_, err := os.Stat(name)
 	return err

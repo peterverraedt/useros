@@ -111,19 +111,19 @@ func (d *def) Lstat(name string) (os.FileInfo, error) {
 	return os.Lstat(name)
 }
 
-func (d *def) Create(name string) (*os.File, error) {
+func (d *def) Create(name string) (File, error) {
 	d.wrap()
 	defer d.unwrap()
 	return os.Create(name)
 }
 
-func (d *def) Open(name string) (*os.File, error) {
+func (d *def) Open(name string) (File, error) {
 	d.wrap()
 	defer d.unwrap()
 	return os.Open(name)
 }
 
-func (d *def) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
+func (d *def) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
 	d.wrap()
 	defer d.unwrap()
 	return os.OpenFile(name, flag, perm)

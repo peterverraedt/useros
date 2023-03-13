@@ -32,10 +32,36 @@ type OS interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	Stat(name string) (os.FileInfo, error)
 	Lstat(name string) (os.FileInfo, error)
-	Create(name string) (*os.File, error)
-	Open(name string) (*os.File, error)
-	OpenFile(name string, flag int, perm os.FileMode) (*os.File, error)
+	Create(name string) (File, error)
+	Open(name string) (File, error)
+	OpenFile(name string, flag int, perm os.FileMode) (File, error)
 	ReadDir(name string) ([]os.DirEntry, error)
+}
+
+type File interface {
+	Chdir() error
+	Chmod(os.FileMode) error
+	Chown(uid, gid int) error
+	Close() error
+	Fd() uintptr
+	Name() string
+	Read(b []byte) (int, error)
+	ReadAt(b []byte, off int64) (int, error)
+	ReadDir(n int) ([]os.DirEntry, error)
+	ReadFrom(r io.Reader) (int64, error)
+	Readdir(n int) ([]os.FileInfo, error)
+	Readdirnames(n int) ([]string, error)
+	Seek(offset int64, whence int) (int64, error)
+	SetDeadline(t time.Time) error
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
+	Stat() (os.FileInfo, error)
+	Sync() error
+	SyscallConn() (syscall.RawConn, error)
+	Truncate(size int64) error
+	Write(b []byte) (int, error)
+	WriteAt(b []byte, off int64) (int, error)
+	WriteString(s string) (int, error)
 }
 
 // OS returns a simulated version of os as if the user would run the commands.
@@ -500,7 +526,37 @@ func (u *user) Lstat(name string) (os.FileInfo, error) {
 	return os.Lstat(name)
 }
 
-func (u *user) Create(name string) (*os.File, error) {
+type file struct {
+	*os.File
+	u *user
+}
+
+func (f *file) Chdir() error {
+	if err := f.u.checkDirExecuteOnly(f.Name()); err != nil {
+		return err
+	}
+
+	return f.File.Chdir()
+}
+
+func (f *file) Chmod(mode os.FileMode) error {
+	return f.u.Chmod(f.Name(), mode)
+}
+
+func (f *file) Chown(uid, gid int) error {
+	return f.u.Chown(f.Name(), uid, gid)
+}
+
+func (f *file) Readdir(n int) ([]os.FileInfo, error) {
+	if err := f.u.checkDirExecuteOnly(f.Name()); err != nil {
+		return nil, err
+	}
+
+	return f.File.Readdir(n)
+}
+
+// Create checks for permissions and calls os.Create.
+func (u *user) Create(name string) (File, error) {
 	stat, _, err := u.hasInodeAccess(name, Write)
 	if err != nil {
 		return nil, err
@@ -519,18 +575,23 @@ func (u *user) Create(name string) (*os.File, error) {
 		return nil, err
 	}
 
-	return f, nil
+	return &file{f, u}, nil
 }
 
-func (u *user) Open(name string) (*os.File, error) {
+func (u *user) Open(name string) (File, error) {
 	if err := u.CanReadObject(name); err != nil {
 		return nil, err
 	}
 
-	return os.Open(name)
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &file{f, u}, nil
 }
 
-func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
+func (u *user) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
 	stat, a, err := u.hasInodeAccess(name, Execute)
 	if err != nil {
 		return nil, err
@@ -538,27 +599,35 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 
 	var f *os.File
 
-	// Try to open a new file
 	for {
+		// Try to open file exclusively first
 		f, err = os.OpenFile(name, flag, perm|fs.FileMode(os.O_EXCL))
-		if os.IsExist(err) {
+
+		// If the file exists, proceed to open an existing file, but only if O_EXCL wasn't passed as option
+		if os.IsExist(err) && perm&fs.FileMode(os.O_EXCL) == 0 {
 			p := Write
 
 			if perm&fs.FileMode(os.O_RDONLY) > 0 {
 				p = Read
 			}
 
+			// Check permission for accessing the existing file
 			err := u.hasObjectAccess(name, p)
 			if os.IsNotExist(err) {
 				// The file disappeared in between OpenFile and Stat
 				// Retry exclusive OpenFile, it makes no sense to return
-				// file not found.
+				// file not found since O_EXCL was not passed as option.
 				continue
 			} else if err != nil {
 				return nil, err
 			}
 
-			return os.OpenFile(name, flag, perm)
+			f, err := os.OpenFile(name, flag, perm)
+			if err != nil {
+				return nil, err
+			}
+
+			return &file{f, u}, nil
 		} else if err != nil {
 			return nil, err
 		}
@@ -566,7 +635,7 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 		break
 	}
 
-	// Can create file?
+	// Check permission for creating a new file
 	if err = u.checkPermission(stat, a, Write); err != nil && u.UID > 0 {
 		os.Remove(name) //nolint:errcheck
 		f.Close()
@@ -581,7 +650,7 @@ func (u *user) OpenFile(name string, flag int, perm os.FileMode) (*os.File, erro
 		return nil, err
 	}
 
-	return f, nil
+	return &file{f, u}, nil
 }
 
 func (u *user) ReadDir(name string) ([]os.DirEntry, error) {
