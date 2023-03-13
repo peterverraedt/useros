@@ -31,7 +31,7 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 		return stat, a, err
 	}
 
-	dirs, err := Directories(name)
+	dirs, err := TraversedDirectories(name)
 	if err != nil {
 		return nil, nil, err
 	}

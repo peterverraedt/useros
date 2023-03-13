@@ -4,12 +4,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
-// Directories returns the list of directories that is followed to get the the specified path.
+// TraversedDirectories returns the list of directories that is followed to get the the specified inode.
 // We first clean up the path, i.e. .. is replaced. We also follow symlinks.
 // E.g. /sbin/../bin/bash would return [/, /usr, /usr/bin] because /bin is symlink to /usr/bin.
-func Directories(path string) ([]string, error) {
+// The last directory should be the real path of the directory of the inode.
+// Note that the existence or type of the inode itself is not checked.
+func TraversedDirectories(path string) ([]string, error) {
+	return ResolveSymlinks(filepath.Dir(filepath.Clean(path)))
+}
+
+// ResolveSymlinks returns the list of paths that is followed to get the the specified path.
+func ResolveSymlinks(path string) ([]string, error) {
 	if len(path) == 0 {
 		return nil, os.ErrInvalid
 	}
@@ -33,13 +41,15 @@ func Directories(path string) ([]string, error) {
 		// Find next part of the url
 		n := strings.IndexRune(path[p+1:], os.PathSeparator) + p + 1
 
+		next := path[:n]
+
 		if n < p+1 {
-			return result, nil
+			// Arrived at the last part
+			n = len(path)
+			next = path
 		}
 
-		nextdir := path[:n]
-
-		fi, err := os.Lstat(nextdir)
+		fi, err := os.Lstat(next)
 		if err != nil {
 			return nil, err
 		}
@@ -51,7 +61,7 @@ func Directories(path string) ([]string, error) {
 			}
 
 			// Follow symlink
-			target, err := os.Readlink(nextdir)
+			target, err := os.Readlink(next)
 			if err != nil {
 				return nil, err
 			}
@@ -69,9 +79,20 @@ func Directories(path string) ([]string, error) {
 			continue
 		}
 
+		if !fi.IsDir() && n < len(path) {
+			return nil, syscall.ENOTDIR
+		}
+
+		// Resolved last path
+		if n >= len(path) {
+			result = append(result, next)
+
+			return result, nil
+		}
+
 		// nextdir is a directory
 		p = n
-		curdir = nextdir
+		curdir = next
 		result = append(result, curdir)
 	}
 }

@@ -6,6 +6,7 @@ package useros
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -369,9 +370,15 @@ func CheckMkdir(tree Tree, user1, user2 OS) {
 	tree.AssertSuccess(user1.Chmod(filepath.Join(tree.Root, "a"), 0700))
 	tree.AssertSuccess(user1.RemoveAll(path))
 
-	path = filepath.Join(tree.Root, "a", "y", "z", "t")
+	path = filepath.Join(tree.Root, "a", "x", "y", "z", "t")
 	tree.AssertDenied(user2.MkdirAll(path, 0700))
 	tree.AssertSuccess(user1.MkdirAll(path, 0700))
+
+	err = user1.Walk(path, func(path string, info fs.FileInfo, err error) error { return err })
+	tree.AssertSuccess(err)
+
+	err = user2.Walk(path, func(path string, info fs.FileInfo, err error) error { return err })
+	tree.AssertDenied(err)
 
 	path = filepath.Join(tree.Root, "b", "x")
 	tree.AssertSuccess(user1.Mkdir(path, 0777))
@@ -393,10 +400,14 @@ func TestCoverage(t *testing.T) {
 
 	New(t).Test(func(tree Tree) {
 		user1 := User{GID: 1000}.OS()
+		user2 := User{UID: 1002, GID: 1000}.OS()
 
 		tree.AssertNotExist(user1.Mkdir(filepath.Join(tree.Root, "i", "do", "not", "exist"), 0755))
 		tree.AssertSuccess(user1.WriteFile(filepath.Join(tree.Root, "i"), nil, 0600))
 		tree.AssertNotDir(user1.Mkdir(filepath.Join(tree.Root, "i", "do"), 0755))
+
+		_, err := user2.EvalSymlinks(filepath.Join(tree.Root, "d", "e"))
+		tree.AssertDenied(err)
 	})
 }
 

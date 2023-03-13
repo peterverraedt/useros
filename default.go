@@ -2,6 +2,7 @@ package useros
 
 import (
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -133,6 +134,24 @@ func (d *def) ReadDir(name string) ([]os.DirEntry, error) {
 	d.wrap()
 	defer d.unwrap()
 	return os.ReadDir(name)
+}
+
+func (d *def) EvalSymlinks(name string) (string, error) {
+	d.wrap()
+	defer d.unwrap()
+
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.EvalSymlinks(abs)
+}
+
+func (d *def) Walk(name string, walkFn filepath.WalkFunc) error {
+	d.wrap()
+	defer d.unwrap()
+	return filepath.Walk(name, walkFn)
 }
 
 func (d *def) wrap() {

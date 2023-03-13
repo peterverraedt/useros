@@ -4,6 +4,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"syscall"
 	"time"
@@ -36,6 +37,8 @@ type OS interface {
 	Open(name string) (File, error)
 	OpenFile(name string, flag int, perm os.FileMode) (File, error)
 	ReadDir(name string) ([]os.DirEntry, error)
+	EvalSymlinks(name string) (string, error)
+	Walk(name string, walkFn filepath.WalkFunc) error
 }
 
 type File interface {
@@ -665,4 +668,103 @@ func (u *user) ReadDir(name string) ([]os.DirEntry, error) {
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name() < dirs[j].Name() })
 
 	return dirs, err
+}
+
+func (u *user) EvalSymlinks(name string) (string, error) {
+	name = filepath.Clean(name)
+
+	// Resolve symlinks
+	intermediate, err := ResolveSymlinks(name)
+	if err != nil {
+		return "", err
+	}
+
+	if len(intermediate) == 0 {
+		return "", os.ErrInvalid
+	}
+
+	// Check whether directories are traversable
+	for _, dir := range intermediate[:len(intermediate)-1] {
+		if err := u.checkDirExecuteOnly(dir); err != nil {
+			return "", err
+		}
+	}
+
+	return intermediate[len(intermediate)-1], nil
+}
+
+func (u *user) Walk(root string, fn filepath.WalkFunc) error {
+	info, err := u.Lstat(root)
+	if err != nil {
+		err = fn(root, nil, err)
+	} else {
+		err = u.walk(root, info, fn)
+	}
+
+	if err == filepath.SkipDir || err == filepath.SkipAll {
+		return nil
+	}
+
+	return err
+}
+
+// walk recursively descends path, calling walkFn.
+func (u *user) walk(path string, info fs.FileInfo, walkFn filepath.WalkFunc) error {
+	if !info.IsDir() {
+		return walkFn(path, info, nil)
+	}
+
+	names, err := u.readDirNames(path)
+	err1 := walkFn(path, info, err)
+	// If err != nil, walk can't walk into this directory.
+	// err1 != nil means walkFn want walk to skip this directory or stop walking.
+	// Therefore, if one of err and err1 isn't nil, walk will return.
+	if err != nil || err1 != nil {
+		// The caller's behavior is controlled by the return value, which is decided
+		// by walkFn. walkFn may ignore err and return nil.
+		// If walkFn returns SkipDir or SkipAll, it will be handled by the caller.
+		// So walk should return whatever walkFn returns.
+		return err1
+	}
+
+	for _, name := range names {
+		filename := filepath.Join(path, name)
+
+		fileInfo, err := u.Lstat(filename)
+		if err != nil {
+			if err := walkFn(filename, fileInfo, err); err != nil && err != filepath.SkipDir {
+				return err
+			}
+		} else {
+			err = u.walk(filename, fileInfo, walkFn)
+			if err != nil {
+				if !fileInfo.IsDir() || err != filepath.SkipDir {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// readDirNames reads the directory named by dirname and returns
+// a sorted list of directory entry names.
+func (u *user) readDirNames(dirname string) ([]string, error) {
+	f, err := u.Open(dirname)
+	if err != nil {
+		return nil, err
+	}
+
+	names, err := f.Readdirnames(-1)
+
+	f.Close()
+
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Strings(names)
+
+	return names, nil
 }
