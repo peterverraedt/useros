@@ -4,6 +4,7 @@
 package useros
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -27,6 +28,9 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 		}
 
 		a, err := acl.Get(filepath.Dir(name))
+		if errors.Is(err, syscall.EOPNOTSUPP) {
+			err = nil
+		}
 
 		return stat, a, err
 	}
@@ -59,7 +63,7 @@ func (u User) hasInodeAccess(name string, perm Permission) (os.FileInfo, acl.ACL
 		}
 
 		a, err = acl.Get(dir)
-		if err != nil {
+		if err != nil && !errors.Is(err, syscall.EOPNOTSUPP) {
 			return nil, nil, err
 		}
 
@@ -90,7 +94,7 @@ func (u User) checkDirExecuteOnly(name string) error {
 	}
 
 	a, err := acl.Get(name)
-	if err != nil {
+	if err != nil && !errors.Is(err, syscall.EOPNOTSUPP) {
 		return err
 	}
 
@@ -127,7 +131,7 @@ func (u User) hasObjectAccess(name string, perm Permission) error {
 	}
 
 	a, err := acl.Get(name)
-	if err != nil {
+	if err != nil && !errors.Is(err, syscall.EOPNOTSUPP) {
 		return err
 	}
 
