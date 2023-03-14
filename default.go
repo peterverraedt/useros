@@ -3,6 +3,7 @@ package useros
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -14,6 +15,16 @@ func Default() OS {
 
 type def struct {
 	Before, After func()
+}
+
+func (d *def) CurrentUser() User {
+	groups, _ := syscall.Getgroups() //nolint:errcheck
+
+	return User{
+		UID:    syscall.Getuid(),
+		GID:    syscall.Getgid(),
+		Groups: groups,
+	}
 }
 
 func (d *def) Chmod(name string, mode os.FileMode) error {

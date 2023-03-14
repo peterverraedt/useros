@@ -17,6 +17,7 @@ type User struct {
 }
 
 type OS interface {
+	CurrentUser() User
 	Chmod(name string, mode os.FileMode) error
 	Chown(name string, uid, gid int) error
 	Chtimes(name string, atime, mtime time.Time) error
@@ -119,6 +120,10 @@ func (u User) Lowns(path string) error {
 
 type user struct {
 	User
+}
+
+func (u *user) CurrentUser() User {
+	return u.User
 }
 
 func (u *user) Chmod(name string, mode os.FileMode) error {
